@@ -1097,7 +1097,7 @@ function buildSGF() {
      谁执黑谁执白，不用再靠 PLAYER / KATAGO 猜。
      SGF 属性值里不能出现 ] 和 \，先剔掉；太长也截一下。 */
   const sgfn = v => String(v || '').replace(/[\[\]\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 24);
-  let s = `(;GM[1]FF[4]SZ[${N}]CA[UTF-8]AP[GoMate:0.3]KM[${settings.komi}]RU[${R.sgf}]`
+  let s = `(;GM[1]FF[4]SZ[${N}]CA[UTF-8]AP[RapaceGo:0.3]KM[${settings.komi}]RU[${R.sgf}]`
     + `PB[${sgfn(clockName('b'))}]PW[${sgfn(clockName('w'))}]`;
   if (R.seats) s += 'GC[明清规则：座子制 · 还棋头]';
   if (R.seats || settings.handicap) {
@@ -2583,7 +2583,7 @@ function applyAnalysis(p, at) {
   if (typeof at !== 'number') at = state.viewAt;
 
   /* 视角：以引擎返回的 currentPlayer 为准（权威）。
-     引擎（GoMate/engine.cfg 里 reportAnalysisWinratesAs = SIDETOMOVE）返回的
+     引擎（RapaceGo/engine.cfg 里 reportAnalysisWinratesAs = SIDETOMOVE）返回的
      winrate / scoreLead / moveInfos[].winrate 全部是「**轮到走棋那一方**」的视角 ——
      已用极端贴目的对照实验验证过（轮白走时 scoreLead<0 表示白方落后）。
      所以这里只做一次「轮走方 → 黑方」的换算，不能再多转一次。 */
@@ -4079,7 +4079,7 @@ function coachMoveList(moves) {
 /* 棋盘矩阵 [[...]]：1=黑 -1=白 0=空。
    ⚠️ 第 0 行是**最上面**那一行 —— 这个朝向是拿官方训练数据逐字节核对过的
       （官方的 3.X-D4 落在 matrix[15][3]，正是本函数算出来的位置）。
-   注意 GoMate 的 y=0 也在最上面（toGTP 写的是 N-y），所以这里是正序，不用翻。 */
+   注意 RapaceGo 的 y=0 也在最上面（toGTP 写的是 N-y），所以这里是正序，不用翻。 */
 function coachMatrix(board) {
   const rows = [];
   for (let y = 0; y < N; y++) {

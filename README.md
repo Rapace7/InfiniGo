@@ -1,4 +1,4 @@
-# 玄清围弈 · InfiniGo
+# 玄清围弈 · RapaceGo
 
 > 一个 Windows 桌面围棋工具：**跟 AI 下棋、看客观数据、听本地模型用大白话讲棋。**
 > 引擎和模型都在你自己电脑上跑，不联网、不上传棋谱。
@@ -100,17 +100,17 @@
 
 ### 第 1 步 · 下载软件
 
-1. 打开这个页面：**<https://github.com/Rapace7/InfiniGo/releases>**
+1. 打开这个页面：**<https://github.com/Rapace7/RapaceGo/releases>**
 2. 往下滑，找到 **Assets** 那一栏（英文，可能要滚到页面底部）
-3. 下载 **`InfiniGo-0.1.0-win-x64.zip`**（147 MB）
+3. 下载 **`RapaceGo.zip`**（147 MB）
    - 旁边那个 `portable.exe` 也能用，但它是单文件、每次启动要先解压，慢一两秒
 4. 下载完是个 zip 文件：**右键 → 全部解压缩**
-5. 打开解压出来的文件夹，里面有一个 **`玄清围弈.exe`**
+5. 打开解压出来的文件夹，里面有一个 **`RapaceGo.exe`**
 6. **双击它 —— 软件能打开了** ✅
    （AI 功能这会儿还不能用，因为还没装引擎，接着往下走）
 
-> 看不懂英文没关系：只要认准一个东西 —— 点那个蓝色的 `InfiniGo-0.1.0-win-x64.zip`，
-> 解压后找到 `玄清围弈.exe` 双击。
+> 看不懂英文没关系：只要认准一个东西 —— 点那个蓝色的 `RapaceGo.zip`，
+> 解压后找到 `RapaceGo.exe` 双击。
 
 ### 第 2 步 · 装围棋引擎（必需，不装就没有 AI 下棋和数据分析）
 
@@ -135,11 +135,11 @@
 
 **2.3 摆对位置**
 
-整理成下面这样。**引擎要放在软件旁边**，和 `玄清围弈.exe` 平级：
+整理成下面这样。**引擎要放在软件旁边**，和 `RapaceGo.exe` 平级：
 
 ```
-InfiniGo-0.1.0-win-x64/
-├─ 玄清围弈.exe
+RapaceGo/
+├─ RapaceGo.exe
 ├─ KataGo/                      ← 2.1 解压出来的文件夹，整个改名成 "KataGo"
 │  ├─ katago.exe
 │  ├─ …（同目录里还有一堆 .dll，一起放着别删）
@@ -193,8 +193,8 @@ InfiniGo-0.1.0-win-x64/
 ### 想从源码跑（改代码 / 看看它怎么写的）
 
 ```bat
-git clone https://github.com/Rapace7/InfiniGo.git
-cd InfiniGo
+git clone https://github.com/Rapace7/RapaceGo.git
+cd RapaceGo
 npm install
 双击 start.bat
 ```

@@ -14,7 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import vm from 'vm';
 
-const dir = 'D:/GoStudy/GoMate';
+const dir = 'D:/GoStudy/RapaceGo';
 let bad = 0;
 
 for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.mjs') && !x.startsWith('_precheck') && !x.startsWith('_dump'))) {

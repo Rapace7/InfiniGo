@@ -1,4 +1,4 @@
-/* 精确诊断：用 GoMate 自己的 coachPrompt + 自己的通道调一次，
+/* 精确诊断：用 RapaceGo 自己的 coachPrompt + 自己的通道调一次，
    看返回的 text 到底有多长 —— 定位「只拿到开头 3 个字」是谁的问题。 */
 const PORT = 9333;
 async function getPage() {

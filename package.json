@@ -1,6 +1,6 @@
 {
-  "name": "infinigo",
-  "productName": "玄清围弈",
+  "name": "rapacego",
+  "productName": "RapaceGo",
   "version": "0.1.0",
   "description": "玄清围弈 —— 跟 AI 下棋、看客观数据、听本地模型讲棋",
   "author": "Rapace7",
@@ -16,8 +16,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.rapace7.infinigo",
-    "productName": "玄清围弈",
+    "appId": "com.rapace7.rapacego",
+    "productName": "RapaceGo",
     "copyright": "Copyright © 2026 Rapace7",
     "directories": { "output": "dist" },
     "asar": false,
@@ -38,9 +38,9 @@
         { "target": "zip", "arch": ["x64"] }
       ],
       "icon": "assets/app.ico",
-      "artifactName": "InfiniGo-${version}-win-x64.${ext}"
+      "artifactName": "RapaceGo.${ext}"
     },
-    "portable": { "artifactName": "InfiniGo-${version}-portable.exe" },
+    "portable": { "artifactName": "RapaceGo.exe" },
     "extraFiles": [
       { "from": "下载讲解模型.bat", "to": "." }
     ]

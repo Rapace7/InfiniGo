@@ -49,7 +49,7 @@ console.log('设置面板已打开；鼠标停在 KataGo 问号 (' + pos.x + ','
    交给外面截的话 hover 已经消失（2026-10-05 踩过）。 */
 const shot = await send('Page.captureScreenshot', { format: 'png' });
 if (shot.result && shot.result.data) {
-  fs.writeFileSync('D:/GoStudy/GoMate/_trash/_shot_sethelp.png', Buffer.from(shot.result.data, 'base64'));
+  fs.writeFileSync('D:/GoStudy/RapaceGo/_trash/_shot_sethelp.png', Buffer.from(shot.result.data, 'base64'));
   console.log('已截图 → _trash/_shot_sethelp.png');
 } else {
   console.log('★ 截图失败：' + JSON.stringify(shot).slice(0, 200));

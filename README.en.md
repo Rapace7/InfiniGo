@@ -1,4 +1,4 @@
-# InfiniGo (玄清围弈)
+# RapaceGo (玄清围弈)
 
 > A Windows desktop Go (weiqi) tool: **play against KataGo, read objective numbers,
 > and hear a local language model explain the moves in plain Chinese.**
@@ -106,8 +106,8 @@ your own copies — they are third-party projects with their own licenses:
 Lay them out like this and it just works (the app looks **next to itself**):
 
 ```
-InfiniGo/
-├─ 玄清围弈.exe
+RapaceGo/
+├─ RapaceGo.exe
 ├─ KataGo/
 │  ├─ engine/katago.exe
 │  └─ weights/b11c768nbt.bin.gz, b18c384nbt-humanv0.bin.gz
@@ -118,24 +118,24 @@ InfiniGo/
 
 **Just want to play, no commentary?** Prepare only the KataGo files — the commentary
 features simply stay unused. Anywhere else works too: set it in the app's Settings, or
-via the `GOMATE_KATAGO` / `GOMATE_LOGOS` environment variables.
+via the `RAPACEGO_KATAGO` / `RAPACEGO_LOGOS` environment variables.
 
 ### Option 1: download the portable build (recommended)
 
-Grab it from the **[Releases page](https://github.com/Rapace7/InfiniGo/releases)**:
+Grab it from the **[Releases page](https://github.com/Rapace7/RapaceGo/releases)**:
 
 | File | Size | Notes |
 |---|---|---|
-| `InfiniGo-0.1.0-win-x64.zip` | ~147 MB | **unzip and run — fastest startup** ⭐ |
-| `InfiniGo-0.1.0-portable.exe` | ~96 MB | single file, double-click (unpacks to temp on each launch) |
+| `RapaceGo.zip` | ~147 MB | **unzip and run — fastest startup** ⭐ |
+| `RapaceGo.exe` | ~96 MB | single file, double-click (unpacks to temp on each launch) |
 
 Drop the two engine folders next to it and you're done.
 
 ### Option 2: run from source (to change the code)
 
 ```
-git clone https://github.com/Rapace7/InfiniGo.git
-cd InfiniGo
+git clone https://github.com/Rapace7/RapaceGo.git
+cd RapaceGo
 npm install
 start.bat            (double-click)
 ```

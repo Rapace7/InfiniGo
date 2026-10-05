@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""启动 GoMate（带 CDP 调试口）→ 跑测试脚本 → 截图（可跑第二段并截第二张）→ 关闭
+"""启动 RapaceGo（带 CDP 调试口）→ 跑测试脚本 → 截图（可跑第二段并截第二张）→ 关闭
 
 用法：python _rtest.py [测试脚本] [截图名] [第二段脚本] [第二张截图名]
 全程只管理自己启动的 electron 进程，绝不碰用户已开着的实例。
@@ -8,10 +8,12 @@ import subprocess, time, os, ctypes, sys
 from ctypes import wintypes
 from PIL import Image
 
-EXE = r'D:\GoStudy\GoMate\node_modules\electron\dist\electron.exe'
-APP = r'D:\GoStudy\GoMate'
+# ★ 项目目录**从本文件位置推导**，不写死盘符 ——
+#   否则把文件夹改名（GoMate → RapaceGo）后整套测试脚本就全废了。
+APP = os.path.dirname(os.path.abspath(__file__))
+EXE = os.path.join(APP, 'node_modules', 'electron', 'dist', 'electron.exe')
 NODE = r'C:\Users\rapac\.workbuddy\binaries\node\versions\22.22.2-3\node.exe'
-G = r'D:\GoStudy\GoMate\\'
+G = APP + os.sep
 S1 = sys.argv[1] if len(sys.argv) > 1 else G + '_cdp_test.mjs'
 P1 = sys.argv[2] if len(sys.argv) > 2 else G + '_rule.png'
 S2 = sys.argv[3] if len(sys.argv) > 3 else None

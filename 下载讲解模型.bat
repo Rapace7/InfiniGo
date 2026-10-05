@@ -17,7 +17,7 @@ REM ============================================================
 set HERE=%~dp0
 set DIR=%HERE%LoGos
 set VER=v0.1.0
-set BASE=https://github.com/Rapace7/InfiniGo/releases/download/%VER%
+set BASE=https://github.com/Rapace7/RapaceGo/releases/download/%VER%
 set PROXY=https://gh-proxy.com/
 
 echo.

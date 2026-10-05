@@ -36,9 +36,9 @@ const BASE_DIR = IS_PACKAGED ? path.dirname(process.execPath) : __dirname;
 /* ---------- 引擎位置 ----------
    ★ 2026-10-04 起**可在界面里改**（左上角「设置」→ 选 katago.exe 和两个权重），
      配置存在软件目录的 settings.json，启动时读它；读不到（首次运行 / 文件坏了）
-     就用下面的默认值。环境变量 GOMATE_KATAGO 仍然认（临时覆盖用）。 */
+     就用下面的默认值。环境变量 RAPACEGO_KATAGO 仍然认（临时覆盖用）。 */
 const CFG_FILE = path.join(BASE_DIR, 'settings.json');
-/* 用 GoMate 自己的配置（复制自 KataGo 的 analysis.cfg，改了两处：
+/* 用 RapaceGo 自己的配置（复制自 KataGo 的 analysis.cfg，改了两处：
    reportAnalysisWinratesAs → SIDETOMOVE、logDir 由启动参数传），不动公共配置。
    ★ engine.cfg 是**程序自带的**文件，所以跟代码走（__dirname），不跟数据走。 */
 const CFG = path.join(__dirname, 'engine.cfg');
@@ -49,15 +49,15 @@ const LOG_DIR = path.join(BASE_DIR, 'engine-logs');
    而 LoGos 由 llama-server 托管，**走 HTTP**（进程只管活着，请求从 localhost 端口进）。
    所以引擎管理里给它们分了 kind：'katago' / 'llama'。 */
 function defaultPaths() {
-  /* 默认约定：引擎就放在**软件目录的上一级**（和 GoMate 并列）——
+  /* 默认约定：引擎就放在**软件目录的上一级**（和 RapaceGo 并列）——
      这样别人 clone 下来，按 README 把 KataGo / LoGos 摆在旁边就能直接用，
      不用先配路径。想放别处有两个办法（优先级从高到低）：
        ① 设置面板里改 → 存进 settings.json，下次打开就用你的；
-       ② 环境变量 GOMATE_KATAGO / GOMATE_LOGOS。
+       ② 环境变量 RAPACEGO_KATAGO / RAPACEGO_LOGOS。
      ★ 这里**不写死盘符** —— 那是本机耦合，换台电脑 / 换个盘就全废。 */
   const up = IS_PACKAGED ? BASE_DIR : path.join(__dirname, '..');
-  const root  = process.env.GOMATE_KATAGO || path.join(up, 'KataGo');
-  const logos = process.env.GOMATE_LOGOS  || path.join(up, 'LoGos');
+  const root  = process.env.RAPACEGO_KATAGO || path.join(up, 'KataGo');
+  const logos = process.env.RAPACEGO_LOGOS  || path.join(up, 'LoGos');
   return {
     katago:        path.join(root, 'engine', 'katago.exe'),
     analyzeWeight: path.join(root, 'weights', 'b11c768nbt.bin.gz'),
@@ -826,7 +826,9 @@ function createWindow() {
     height: H,
     minWidth: 1020,          // 左栏 + 棋盘 + 右栏 的下限（再窄就得折行了）
     minHeight: 680,
-    title: '玄清围弈',
+    /* 窗口标题：中文名 + 英文名（英文名是产品对外的名字，2026-10-05 从
+       InfiniGo 改成 RapaceGo —— 取自作者的 ID，带个人名片色彩） */
+    title: '玄清围弈 · RapaceGo',
     backgroundColor: '#f7f6f3',
     autoHideMenuBar: true,
     webPreferences: {
@@ -852,11 +854,11 @@ function createWindow() {
    `-make-shortcut` 是一次性工具：创建完就退出，不开窗口、不启动引擎。 */
 function makeDesktopShortcut() {
   if (process.platform !== 'win32') return { error: '只在 Windows 上支持' };
-  const name = '玄清围弈';
-  /* 落点默认是桌面。★ `GOMATE_SHORTCUT_OUT` 可覆盖 —— 自动化测试时指向项目内的
+  const name = 'RapaceGo';       // 桌面快捷方式名，跟 exe 一致
+  /* 落点默认是桌面。★ `RAPACEGO_SHORTCUT_OUT` 可覆盖 —— 自动化测试时指向项目内的
      _trash/：命令沙箱不允许子进程写项目外的目录，那时 writeShortcutLink 会**返回 false**
      （不抛错，所以不看返回值会以为是「成功但没生效」——这个坑记一下）。 */
-  const outDir = process.env.GOMATE_SHORTCUT_OUT || app.getPath('desktop');
+  const outDir = process.env.RAPACEGO_SHORTCUT_OUT || app.getPath('desktop');
   const link = path.join(outDir, name + '.lnk');
   const ico = path.join(__dirname, 'assets', 'app.ico');
   try {
@@ -1219,7 +1221,7 @@ ipcMain.handle('records:setNote', (_e, name, note) => {
 app.whenReady().then(() => {
   /* 一次性工具：electron . --make-shortcut → 建好桌面快捷方式就退出（不开窗口、不启动引擎）。
      给「重装 / 换电脑 / 桌面图标丢了」用，平时由设置面板里的按钮触发。 */
-  if (process.env.GOMATE_MAKE_SHORTCUT === '1') {
+  if (process.env.RAPACEGO_MAKE_SHORTCUT === '1') {
     const r = makeDesktopShortcut();
     /* ★ 结果再落盘一份：electron.exe 是 GUI 子系统程序，stdout 在 Windows 上不一定接得到，
        而 app.exit() 会直接丢缓冲区 —— 跑命令行工具时靠这个文件看结果。 */
