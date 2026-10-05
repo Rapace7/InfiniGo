@@ -352,6 +352,7 @@
     <div class="mfoot">
       <button id="rec-import" title="从电脑里挑 SGF 棋谱文件，复制进棋谱库（可以多选；重名不会覆盖）">导入棋谱…</button>
       <button id="rec-save-now">把当前对局存进来</button>
+      <button id="rec-change-dir" title="把棋谱库换到别的文件夹（比如数据盘）。已有的棋谱会**复制**一份过去，老位置的不动 —— 宁可你自己多删一次，也不会悄悄弄丢。">更改文件夹…</button>
       <button id="rec-open-dir">打开文件夹</button>
       <div class="spacer"></div>
       <button id="rec-close">关闭</button>
@@ -424,9 +425,17 @@
       </div>
     </div>
 
-    <!-- 「最近用过的权重」下拉（2026-10-04 用户要求：权重多套并存、记住上次用的）：
-         选项由 main.js 的 recent 列表填 —— 点输入框就能挑，不用重走文件对话框。
-         用原生 datalist，不占额外界面。 -->
+    <!-- 数据（2026-10-05 用户要求：棋谱库位置可改，但默认仍在程序目录里） -->
+    <div class="setgroup">
+      <div class="setgroup-h">数据</div>
+      <div class="setrow">
+        <span class="setlb" title="棋谱存在哪。默认是程序目录下的 records\ 文件夹（里面是 .sgf 棋谱，以及每份棋谱的复盘报告和逐手讲解）。想放到别的盘就在这里改 —— 已有的棋谱会自动**复制**一份过去，老位置的不删。">棋谱库文件夹</span>
+        <input type="text" id="set-recordsDir" spellcheck="false" autocomplete="off" placeholder="默认：程序目录\records">
+        <button id="pick-recordsDir">更改…</button>
+        <button id="reset-recordsDir" title="改回默认（程序目录下的 records\），已改到别处时才有意义">用默认</button>
+        <span class="setmark" id="mark-recordsDir">—</span>
+      </div>
+    </div>
     <datalist id="recent-analyzeWeight"></datalist>
     <datalist id="recent-playWeight"></datalist>
     <datalist id="recent-coachWeight"></datalist>

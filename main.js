@@ -39,11 +39,16 @@ const BASE_DIR = IS_PACKAGED ? path.dirname(process.execPath) : __dirname;
      · 软件明明解压在 D 盘，却还要占 C 盘；
      · **把文件夹删了也不干净**（C 盘还留着一份）。
    这个软件要做成「整个文件夹拷走、删掉就彻底卸载」的形态，所以必须挪过来。
-   ★ 必须在 app ready 之前调用 setPath；老版本没有 sessionData，用 try 兜住。 */
+
+   ⚠️ 两个踩过的坑（2026-10-05 实测）：
+     ① **不要提前 mkdirSync 建这个目录** —— Chromium 启动时要「把旧缓存搬过来」，
+        目录预先存在会让它走成迁移分支；碰上 C 盘有同名旧目录时就报
+        `Unable to move the cache: 拒绝访问(0x5)` 然后**整个软件起不来**（退出码 0）。
+        交给它自己建最稳。
+     ② 必须在 app ready 之前调用 setPath。 */
 if (IS_PACKAGED) {
   try {
     const ud = path.join(BASE_DIR, 'userdata');
-    fs.mkdirSync(ud, { recursive: true });
     app.setPath('userData', ud);
     app.setPath('sessionData', ud);
   } catch (e) { /* 极端情况失败就算了，不影响主功能 */ }
@@ -130,10 +135,12 @@ function readConfig() {
       playWeight:    pick(raw.playWeight)    || d.playWeight,
       coachServer:   pick(raw.coachServer)   || d.coachServer,
       coachWeight:   pick(raw.coachWeight)   || d.coachWeight,
+      recordsDir:    typeof raw.recordsDir === 'string' ? raw.recordsDir.trim() : '',
       recent:        normRecent(raw.recent),
     };
   } catch (e) {
     return Object.assign(d, {
+      recordsDir: '',
       recent: { analyzeWeight: [], playWeight: [], coachWeight: [] },
     });
   }
@@ -919,8 +926,40 @@ ipcMain.handle('engine:cancel', () => cancel(ENGINES.analyze));
    ★ 存放位置选**软件自己的目录**，不去动用户的「我的棋谱」——那是他自己的文件。
    ★ 删除走**系统回收站**（shell.trashItem），不 fs.unlink：万一误删还能捞回来。
    ★ 文件名统一过 safeRecName()：剥掉路径部分、替换非法字符，防止爬到目录外面去。 */
-const RECORDS_DIR = path.join(BASE_DIR, 'records');
-try { fs.mkdirSync(RECORDS_DIR, { recursive: true }); } catch (e) { /* 已存在就算了 */ }
+let RECORDS_DIR = path.join(BASE_DIR, 'records');
+
+/* 棋谱库位置可以改（设置面板 / 棋谱库弹窗里都有入口）。
+   用「可变常量」而不是每次现算，是为了让其余十几处引用（reviewPath / coachPath /
+   records:* 各种 handler）一行都不用动。
+   传 dir 就切到 dir（空串 = 回到默认的 程序目录\records）。 */
+function refreshRecordsDir(dir) {
+  const want = (dir !== undefined ? dir : (PATHS && PATHS.recordsDir) || '').trim();
+  RECORDS_DIR = want || path.join(BASE_DIR, 'records');
+  try { fs.mkdirSync(RECORDS_DIR, { recursive: true }); } catch (e) { /* 已存在就算了 */ }
+}
+refreshRecordsDir();
+
+/* 改位置时把已有棋谱**复制**过去（2026-10-05 用户要求）。
+   ★ 只复制、不删老文件 —— 宁可让人多删一次，也不能悄悄把棋谱弄丢。
+     同名文件一律跳过，绝不覆盖。 */
+function migrateRecords(from, to) {
+  const out = { copied: 0, skipped: 0, failed: 0 };
+  if (!from || from === to) return out;
+  try { if (!fs.existsSync(from)) return out; fs.mkdirSync(to, { recursive: true }); }
+  catch (e) { out.failed = 1; return out; }
+  let names = [];
+  try { names = fs.readdirSync(from); } catch (e) { return out; }
+  for (const f of names) {
+    const src = path.join(from, f), dst = path.join(to, f);
+    try {
+      if (!fs.statSync(src).isFile()) continue;      // 只搬文件，不动子目录
+      if (fs.existsSync(dst)) { out.skipped += 1; continue; }
+      fs.copyFileSync(src, dst);
+      out.copied += 1;
+    } catch (e) { out.failed += 1; }
+  }
+  return out;
+}
 
 function safeRecName(n) {
   const base = path.basename(String(n || ''));
@@ -1093,6 +1132,9 @@ function normalizeConfig(c) {
     playWeight:    pick(c && c.playWeight)    || d.playWeight,
     coachServer:   pick(c && c.coachServer)   || d.coachServer,
     coachWeight:   pick(c && c.coachWeight)   || d.coachWeight,
+    /* 棋谱库位置（2026-10-05 用户要求可改）。★ 允许为空串 ——
+       空 = 用默认（程序目录下的 records\），这也是出厂行为。 */
+    recordsDir:    (c && typeof c.recordsDir === 'string') ? c.recordsDir.trim() : '',
   };
 }
 
@@ -1158,21 +1200,33 @@ ipcMain.handle('settings:get', () => configInfo(PATHS));
 /* 弹系统文件选择框 —— 只返回选中的路径和检测结果，**不保存**（前端先给用户看一眼） */
 ipcMain.handle('settings:choose', async (_e, kind) => {
   const cur = normalizeConfig(PATHS);
+  /* ★ 棋谱库那项选的是**文件夹**，其余是选文件 —— 走的是同一个对话框入口。 */
+  const isDir = (kind === 'recordsDir');
   const isGguf = (kind === 'coachWeight');
   const isExe = !isGguf && (kind === 'katago' || kind === 'coachServer');
-  const title = isGguf ? '选择 LoGos 讲解权重（.gguf）'
-    : kind === 'coachServer' ? '选择 llama-server.exe'
-      : isExe ? '选择 katago.exe' : '选择权重文件（.bin.gz）';
-  const r = await dialog.showOpenDialog(win, {
+  const title = isDir ? '选择棋谱库文件夹（棋谱、复盘报告、讲解都会放这儿）'
+    : isGguf ? '选择 LoGos 讲解权重（.gguf）'
+      : kind === 'coachServer' ? '选择 llama-server.exe'
+        : isExe ? '选择 katago.exe' : '选择权重文件（.bin.gz）';
+  const opt = {
     title,
-    defaultPath: path.dirname(cur[kind] || ''),
-    properties: ['openFile'],
-    filters: isExe ? [{ name: '可执行文件', extensions: ['exe'] }]
+    defaultPath: isDir ? (cur[kind] || RECORDS_DIR) : path.dirname(cur[kind] || ''),
+    properties: [isDir ? 'openDirectory' : 'openFile'],
+  };
+  if (!isDir) {
+    opt.filters = isExe ? [{ name: '可执行文件', extensions: ['exe'] }]
       : isGguf ? [{ name: 'LoGos 权重', extensions: ['gguf'] }]
-        : [{ name: 'KataGo 权重', extensions: ['gz'] }],
-  });
+        : [{ name: 'KataGo 权重', extensions: ['gz'] }];
+  }
+  const r = await dialog.showOpenDialog(win, opt);
   if (!r || r.canceled || !r.filePaths || !r.filePaths.length) return { canceled: true };
   const picked = r.filePaths[0];
+  if (isDir) {
+    let writable = false;
+    try { fs.mkdirSync(picked, { recursive: true }); fs.accessSync(picked, fs.constants.W_OK); writable = true; }
+    catch (e) { /* 下面把 false 报给界面 */ }
+    return { path: picked, ok: writable, isDir: true };
+  }
   const out = { path: picked, ok: fileOk(picked) };
   if (kind === 'katago') {
     const sug = guessWeights(picked);
@@ -1188,12 +1242,20 @@ ipcMain.handle('settings:choose', async (_e, kind) => {
 /* 只检测（不保存）—— 前端每次改了路径都调它，刷新「✓ 已找到 / ★ 找不到」 */
 ipcMain.handle('settings:check', (_e, c) => {
   const n = normalizeConfig(c);
+  /* 棋谱库：空 = 用默认（程序目录\records，算「没问题」）；
+     填了就得真的能写 —— 目录不存在会自动建一下。 */
+  let recOk = true;
+  if (n.recordsDir) {
+    try { fs.mkdirSync(n.recordsDir, { recursive: true }); fs.accessSync(n.recordsDir, fs.constants.W_OK); }
+    catch (e) { recOk = false; }
+  }
   return {
     katago:        fileOk(n.katago),
     analyzeWeight: fileOk(n.analyzeWeight),
     playWeight:    fileOk(n.playWeight),
     coachServer:   fileOk(n.coachServer),
     coachWeight:   fileOk(n.coachWeight),
+    recordsDir:    recOk,
   };
 });
 
@@ -1212,12 +1274,34 @@ ipcMain.handle('settings:save', (_e, c) => {
   }
   /* 把这次的路径记进「最近用过」列表（详见 withRecent 的注释），
      一起写进 settings.json —— 下次打开设置就能从下拉里挑。 */
+  const oldRecordsDir = RECORDS_DIR;
   const full = Object.assign({}, n, { recent: withRecent(PATHS.recent, n) });
   const w = writeConfig(full);
   if (w.error) return { error: '写入 settings.json 失败：' + w.error };
   PATHS = full;
+  /* ★ 棋谱库位置变了 → 切过去，并把老位置的棋谱**复制**一份过去（老的不删）。 */
+  refreshRecordsDir();
+  const moved = migrateRecords(oldRecordsDir, RECORDS_DIR);
   restartEngines();                 // 引擎重启是异步的，界面靠 engine:status 事件知道进度
-  return { ok: true, config: PATHS };
+  return { ok: true, config: PATHS, recordsDir: RECORDS_DIR, moved };
+});
+
+/* 棋谱库弹窗里的「更改文件夹」—— 和设置面板是**同一个配置项**、同一套逻辑，
+   只是入口不同（用户要求两个地方都能改）。 */
+ipcMain.handle('records:setDir', (_e, dir) => {
+  const want = String(dir || '').trim();
+  if (want) {
+    try { fs.mkdirSync(want, { recursive: true }); fs.accessSync(want, fs.constants.W_OK); }
+    catch (e) { return { error: '这个文件夹用不了：' + ((e && e.message) || e) }; }
+  }
+  const old = RECORDS_DIR;
+  const cfg = Object.assign({}, PATHS, { recordsDir: want });
+  const w = writeConfig(cfg);
+  if (w.error) return { error: '写入 settings.json 失败：' + w.error };
+  PATHS = cfg;
+  refreshRecordsDir(want);
+  const moved = migrateRecords(old, RECORDS_DIR);
+  return { ok: true, dir: RECORDS_DIR, moved, isDefault: !want };
 });
 
 /* 写「备注名」：改 SGF 里的 GN 字段（**不动文件名** —— 用户要求文件名照原样显示）。

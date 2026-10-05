@@ -79,6 +79,7 @@ contextBridge.exposeInMainWorld('api', {
     remove: name      => ipcRenderer.invoke('records:delete', name),
     dir:    ()        => ipcRenderer.invoke('records:dir'),
     openDir: ()       => ipcRenderer.invoke('records:openDir'),
+    setDir: dir       => ipcRenderer.invoke('records:setDir', dir),
     /* 导入棋谱：弹系统文件框（可多选）→ 复制进棋谱库
        → { canceled:true } | { ok:true, imported:[文件名], failed:[原因] } | { error } */
     importSgf: ()     => ipcRenderer.invoke('records:import'),

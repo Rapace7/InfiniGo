@@ -1420,6 +1420,24 @@ $('btn-records').onclick = async () => {
 };
 $('rec-close').onclick = () => REC_MASK.classList.remove('open');
 $('rec-open-dir').onclick = () => window.api.records.openDir();
+/* 「更改文件夹…」：和「设置」里那一项是**同一个配置项**，只是入口不同（用户要求两个地方都能改）。
+   改完会把已有棋谱**复制**一份过去（老的留着不删），并如实报复制了几份、跳过几份。 */
+$('rec-change-dir').onclick = async () => {
+  const r = await window.api.settings.choose('recordsDir');
+  if (!r || r.canceled) return;
+  if (!r.ok) { flash('这个文件夹用不了 —— 可能没写权限，换一个试试'); return; }
+  const res = await window.api.records.setDir(r.path);
+  if (!res || res.error) { flash(res && res.error || '换不了'); return; }
+  $('rec-dir').textContent = res.dir || '';
+  await refreshRecords();
+  const m = res.moved || { copied: 0, skipped: 0, failed: 0 };
+  let tip = '棋谱库已改到：' + (res.dir || '');
+  if (m.copied) tip += '；已把 ' + m.copied + ' 份棋谱复制过去';
+  if (m.skipped) tip += '；' + m.skipped + ' 份同名文件已存在，没覆盖';
+  if (m.failed) tip += '；有 ' + m.failed + ' 份没搬成';
+  if (m.copied) tip += '。**老位置的没删**，确认新地方对了你自己删掉就行。';
+  flash(tip);
+};
 $('rec-save-now').onclick = async () => {
   if (!state.moves.length) { flash('还没落子，没什么可存的'); return; }
   await saveToRecords();
@@ -3842,7 +3860,7 @@ window.addEventListener('keydown', e => {
 const SET_MASK = $('settings');
 /* 设置面板里的五项路径。前三个是 KataGo（**必需**：下棋/分析全靠它），
    后两个是 LoGos 讲解模型（**可选**：不配就没讲解功能，别的照常用）。 */
-const SET_KEYS = ['katago', 'analyzeWeight', 'playWeight', 'coachServer', 'coachWeight'];
+const SET_KEYS = ['katago', 'analyzeWeight', 'playWeight', 'coachServer', 'coachWeight', 'recordsDir'];
 const SET_LABEL = { katago: 'KataGo 程序', analyzeWeight: '分析权重', playWeight: '对弈权重' };
 let setCfg = null;                  // 面板里正在编辑的三条路径（还没保存）
 
@@ -3858,9 +3876,16 @@ async function refreshSettingsMarks() {
   for (const k of SET_KEYS) {
     const el = $('mark-' + k);
     const ok = !!(r && r[k]);
-    el.textContent = ok ? '✓ 已找到' : '★ 找不到';
     el.classList.toggle('ok', ok);
     el.classList.toggle('bad', !ok);
+    /* 棋谱库是**目录**，文案和「文件」那几项不一样：
+       留空 = 用默认（程序目录\records，完全正常，不是「找不到」）。 */
+    if (k === 'recordsDir') {
+      const custom = !!(setCfg && setCfg.recordsDir && setCfg.recordsDir.trim());
+      el.textContent = !custom ? '默认位置' : (ok ? '✓ 可用' : '★ 用不了');
+      continue;
+    }
+    el.textContent = ok ? '✓ 已找到' : '★ 找不到';
   }
 }
 
@@ -3940,6 +3965,14 @@ $('set-default').onclick = async () => {
   await refreshSettingsMarks();
 };
 
+/* 棋谱库那一项旁边的「用默认」（只有改到别处时才有意义） */
+$('reset-recordsDir').onclick = () => {
+  setCfg.recordsDir = '';
+  $('set-recordsDir').value = '';
+  setMsg('已改回默认（程序目录\\records），点「保存并重启引擎」才生效。');
+  refreshSettingsMarks();
+};
+
 $('set-shortcut').onclick = async () => {
   const r = await window.api.makeShortcut();
   if (r && r.ok) setMsg('桌面快捷方式已创建：' + r.path);
@@ -3967,7 +4000,15 @@ $('set-save').onclick = async () => {
   SET_MASK.classList.remove('open');
   /* 引擎是**异步**重启的（停 → 拉起 → 预热）；好了没有要看 engine:status 事件 */
   engineReloading = true;
-  flash('设置已保存 · 引擎正在按新路径重启…');
+  /* ★ 这次改棋谱库位置的话，如实报一下搬了几份过去（老位置的不删）。 */
+  const mv = r.moved;
+  if (mv && (mv.copied || mv.failed)) {
+    flash('设置已保存 · 引擎正在重启…　棋谱：已复制 ' + mv.copied + ' 份到新位置'
+      + (mv.skipped ? '，' + mv.skipped + ' 份同名已存在没覆盖' : '')
+      + '（老位置的没删）');
+  } else {
+    flash('设置已保存 · 引擎正在按新路径重启…');
+  }
 };
 
 /* 重启完成 → 提示一句。由 applyEngineStatus 调用（那两个引擎的都绪状态在那儿更新）。 */
