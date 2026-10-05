@@ -28,12 +28,12 @@
 ## 能做什么
 
 ### 对弈
-- **人机对弈**：KataGo 的人类棋风模型，难度是**业余段位标尺**（20 级 ~ 9 段），另可选「前 AI 时代段位」和「职业棋风 · 按年份」
+- **人机对弈**：KataGo 的人类棋风模型，难度是**业余段位标尺**（20 级 – 9 段），另可选「前 AI 时代段位」和「职业棋风 · 按年份」
 - **让子**：按标准做（预先摆的是黑子、摆完白先走、不贴目）
 - **摆棋 / 双人**：两边都由你下，用来研究变化；从摆棋切回人机时会先问你「AI 执哪一方」
 - **试下**：从当前局面打草稿，不影响正式对局
 - 9 / 13 / 19 路，四种规则（中国 / 日本 / 韩国 / 明清还棋头）
-- **计时**：超快棋 ~ 世界大赛五档，带读秒提示音、**超时判负**
+- **计时**：超快棋 – 世界大赛五档，带读秒提示音、**超时判负**
 
 ### 看数据
 - **胜率条 + 目数**（形势一眼可见）、**推荐点**（圈内数字是搜索量）、**变化图**（鼠标停在推荐点上）
@@ -59,28 +59,84 @@
 
 ---
 
+## 硬件要求
+
+**主要门槛是显存** —— KataGo 和讲解模型都住在显存里。
+
+| | 最低 | 推荐 |
+|---|---|---|
+| 系统 | Windows 10 / 11 64 位 | 同 |
+| 内存 | 8 GB | 16 GB |
+| 显卡 | 4GB 显存的独显（或核显，能跑 KataGo 就行） | **8GB 显存**（RTX 3060 / 4060 以上） |
+| 硬盘 | 约 2 GB | 约 8 GB（要装讲解模型的话） |
+
+显存实测（RTX 4070 Laptop / 8GB，用 `nvidia-smi` 量）：
+
+| 组件 | 占用 |
+|---|---|
+| KataGo 分析引擎（胜率、推荐点、形势、复盘） | ≈ **350 MB** |
+| KataGo 对弈引擎（AI 落子） | ≈ **170 MB** |
+| LoGos 讲解模型（Q4_K_M，7B） | ≈ **4.9 GB** |
+| **三个全开** | ≈ **5.5 GB** |
+
+所以：
+
+- **6GB 显存的卡能用**，但别三个一起开（先卸载对弈引擎或讲解模型）
+- **4GB 显存 / 核显**：只能用 KataGo 那部分功能，讲解会一直提示「讲解模型还没加载」
+- **想三个一起开，就要有 8GB**
+
+> 正因为这样，软件**默认一个引擎都不加载** —— 你不用 AI 就不占显存；
+> 要用时点顶栏的灯，讲完可以随时卸载。
+
+**没有独显也能用**：KataGo 支持纯 CPU 模式（设置面板里能改），慢但能下棋。
+讲解模型在 CPU 上也能跑，但速度会掉到每秒几个字，基本没法用。
+
+---
+
 ## 快速开始
 
-### ⚠️ 先说清楚：本仓库**不含引擎和模型**
+### ⚠️ 先说清楚：仓库和下载包都**不含引擎和模型**
 
 这里只有软件本身的代码（600KB 左右）。要真正跑起来，你需要自己准备两个引擎 ——
 **它们是别人的项目，各有各的许可，不适合塞进这个仓库**：
 
 | 需要的东西 | 从哪来 | 放哪 |
 |---|---|---|
-| **KataGo** 程序 | [lightvector/KataGo](https://github.com/lightvector/KataGo/releases) 的 Windows 版 | `<项目上级目录>\KataGo\engine\katago.exe` |
-| **KataGo 权重**（两个） | [katagotraining.org](https://katagotraining.org/) —— 一个**强**模型（算胜率） + 一个**带 human 的模型**（当对手） | `<项目上级目录>\KataGo\weights\*.bin.gz` |
-| **llama.cpp** 运行时 | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp/releases)，要 CUDA 版（**别忘了另下 cudart 包，官方的主包不含 CUDA 运行时**） | `<项目上级目录>\LoGos\llama-server.exe` |
-| **LoGos-7B** 权重 | [YichuanMa/LoGos-7B](https://huggingface.co/YichuanMa/LoGos-7B)（转成 GGUF，推荐 Q4_K_M，约 4.4GB） | `<项目上级目录>\LoGos\LoGos-7B-Q4_K_M.gguf` |
+| **KataGo** 程序 | [lightvector/KataGo](https://github.com/lightvector/KataGo/releases) 的 Windows 版 | `<软件目录>\KataGo\engine\katago.exe` |
+| **KataGo 权重**（两个） | [katagotraining.org](https://katagotraining.org/) —— 一个**强**模型（算胜率） + 一个**带 human 的模型**（当对手） | `<软件目录>\KataGo\weights\*.bin.gz` |
+| **llama.cpp** 运行时 | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp/releases)，要 CUDA 版（**别忘了另下 cudart 包，官方的主包不含 CUDA 运行时**） | `<软件目录>\LoGos\llama-server.exe` |
+| **LoGos-7B** 权重 | [YichuanMa/LoGos-7B](https://huggingface.co/YichuanMa/LoGos-7B)（转成 GGUF，推荐 Q4_K_M，约 4.4GB） | `<软件目录>\LoGos\LoGos-7B-Q4_K_M.gguf` |
 
-> **为什么是"上一级目录"**：软件默认就去**它旁边的 `KataGo\` 和 `LoGos\`** 找引擎。
-> 比如项目在 `D:\GoStudy\GoMate`，那引擎就放 `D:\GoStudy\KataGo` 和 `D:\GoStudy\LoGos`。
-> 想放别处也行 —— 在软件的「设置」里改，或设环境变量 `GOMATE_KATAGO` / `GOMATE_LOGOS`。
+放成这样就能直接用（软件会去**自己所在目录**里找）：
 
-**只想下棋不想装讲解**？也可以：只配 KataGo 那三项，讲解功能不用就行。
-**显卡**：LoGos 的 Q4 权重约占 4.4GB 显存，8GB 的卡放得下；它和 KataGo 不宜同时全速跑，所以平时不加载。
+```
+InfiniGo/
+├─ 玄清围弈.exe
+├─ KataGo/
+│  ├─ engine/katago.exe
+│  └─ weights/b11c768nbt.bin.gz、b18c384nbt-humanv0.bin.gz
+└─ LoGos/                        ← 讲解功能，不想要可以整个不放
+   ├─ llama-server.exe
+   └─ LoGos-7B-Q4_K_M.gguf
+```
 
-### 跑起来
+**只想下棋、不想要讲解？** 只准备 KataGo 那两个文件就够了，讲解功能不用就行。
+
+> **为什么是"程序旁边"**：软件默认去**自己所在目录**找引擎。
+> 想放别处也行 —— 在「设置」里改，或设环境变量 `GOMATE_KATAGO` / `GOMATE_LOGOS`。
+
+### 方式一：下载免安装版（推荐）
+
+去 **[Releases 页面](https://github.com/Rapace7/InfiniGo/releases)** 下载：
+
+| 文件 | 大小 | 说明 |
+|---|---|---|
+| `InfiniGo-0.1.0-win-x64.zip` | ~147 MB | **解压即用，启动最快** ⭐ |
+| `InfiniGo-0.1.0-portable.exe` | ~96 MB | 单文件，双击就跑（每次启动要先解压到临时目录，慢一两秒） |
+
+解压后把上面那两个引擎目录放进去，就完事了。
+
+### 方式二：从源码跑（想改代码 / 想看它怎么写的）
 
 ```bat
 git clone https://github.com/Rapace7/InfiniGo.git
@@ -90,6 +146,7 @@ npm install
 ```
 
 国内网络 `npm install` 慢的话，项目里的 `.npmrc` 已经配好了镜像（npmmirror + Electron 镜像），直接装就行。
+源码模式下引擎要放在**项目的上一级**（和 `GoMate` 并列），或者在「设置」里填路径。
 
 ### 配路径
 
@@ -105,11 +162,15 @@ npm install
 
 ## 关于讲解的几个说明
 
-**速度**：本地跑 LoGos，实测一段 150~200 字的讲解约 **2~4 秒**（RTX 4070 Laptop）。
-全盘讲一盘 200 手约 **8~12 分钟**（可随时停，停下后再点会**接着讲**，讲过的不重讲）。
+**速度**：本地跑 LoGos，实测一段 150–200 字的讲解约 **2–4 秒**（RTX 4070 Laptop）。
+全盘讲一盘 200 手约 **8–12 分钟**（可随时停，停下后再点会**接着讲**，讲过的不重讲）。
 
 **它会说错话**：LoGos 是 7B 的小模型，偶尔会把术语叫错（比如把星位说成小目）。
 **位置通常是对的，叫法可能不准** —— 请以 KataGo 的数字为准。
+
+**它只会说中文**（训练数据是中文标注的，给英文 prompt 也照样输出中文）。
+所以如果你看不懂中文：**把讲解选起来，丢进任何翻译工具或大模型里翻一下就行** ——
+它是一段通俗的白话，翻译过去读起来很顺，围棋术语也能译得出来。
 
 **「全盘讲解」和「AI 复盘」不是一回事**：复盘给的是**数据报告**，全盘讲解给的是**逐手文字**。
 

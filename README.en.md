@@ -56,29 +56,82 @@ Click the indicator in the top bar when you want AI:
 
 ---
 
-## ⚠️ This repo does NOT include the engines or the model
+## Hardware requirements
 
-Only the application code is here (~600 KB). To actually run it you must provide
+**VRAM is the real constraint** — both KataGo and the commentary model live in it.
+
+| | Minimum | Recommended |
+|---|---|---|
+| OS | Windows 10 / 11 (64-bit) | same |
+| RAM | 8 GB | 16 GB |
+| GPU | 4 GB VRAM (or integrated graphics — KataGo alone is fine) | **8 GB VRAM** (RTX 3060 / 4060 or better) |
+| Disk | ~2 GB | ~8 GB (if you want the commentary model) |
+
+Measured VRAM usage (RTX 4070 Laptop / 8 GB, read with `nvidia-smi`):
+
+| Component | Usage |
+|---|---|
+| KataGo analysis engine (winrate, candidates, territory, review) | ≈ **350 MB** |
+| KataGo play engine (AI moves) | ≈ **170 MB** |
+| LoGos commentary model (Q4_K_M, 7B) | ≈ **4.9 GB** |
+| **All three at once** | ≈ **5.5 GB** |
+
+- **6 GB VRAM works**, but don't load all three at once (unload one first)
+- **4 GB / integrated graphics**: KataGo features only — commentary will keep saying
+  "commentary model not loaded"
+- **To run all three at once you want 8 GB**
+
+> This is exactly why the app **loads no engine at all by default** — if you're not using
+> AI, nothing occupies VRAM. Click the indicator in the top bar when you need it, and
+> unload when you're done.
+
+**No discrete GPU?** KataGo runs CPU-only (changeable in Settings) — slow, but playable.
+The commentary model also runs on CPU but drops to a few characters per second, which is
+effectively unusable.
+
+---
+
+## ⚠️ Neither the repo nor the download bundles the engines or the model
+
+Only the application code is here (about 600 KB). To actually run it you must provide
 your own copies — they are third-party projects with their own licenses:
 
 | What | Where from | Put it at |
 |---|---|---|
-| **KataGo** binary | [lightvector/KataGo](https://github.com/lightvector/KataGo/releases) (Windows) | `<parent>\KataGo\engine\katago.exe` |
-| **KataGo weights** (two) | [katagotraining.org](https://katagotraining.org/) — one strong, one `human` | `<parent>\KataGo\weights\*.bin.gz` |
-| **llama.cpp** runtime | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp/releases), CUDA build (**the official zip does NOT bundle the CUDA runtime — grab the matching `cudart` zip too**) | `<parent>\LoGos\llama-server.exe` |
-| **LoGos-7B** weights | [YichuanMa/LoGos-7B](https://huggingface.co/YichuanMa/LoGos-7B), converted to GGUF (Q4_K_M ≈ 4.4 GB) | `<parent>\LoGos\LoGos-7B-Q4_K_M.gguf` |
+| **KataGo** binary | [lightvector/KataGo](https://github.com/lightvector/KataGo/releases) (Windows) | `<app>\KataGo\engine\katago.exe` |
+| **KataGo weights** (two) | [katagotraining.org](https://katagotraining.org/) — one strong, one `human` | `<app>\KataGo\weights\*.bin.gz` |
+| **llama.cpp** runtime | [ggml-org/llama.cpp](https://github.com/ggml-org/llama.cpp/releases), CUDA build (**the official zip does NOT bundle the CUDA runtime — grab the matching `cudart` zip too**) | `<app>\LoGos\llama-server.exe` |
+| **LoGos-7B** weights | [YichuanMa/LoGos-7B](https://huggingface.co/YichuanMa/LoGos-7B), converted to GGUF (Q4_K_M ≈ 4.4 GB) | `<app>\LoGos\LoGos-7B-Q4_K_M.gguf` |
 
-`<parent>` = the folder **one level above** this project (e.g. if the project is at
-`D:\GoStudy\GoMate`, engines go in `D:\GoStudy\KataGo` and `D:\GoStudy\LoGos`).
-Anywhere else works too — set it in the app's Settings, or via the
-`GOMATE_KATAGO` / `GOMATE_LOGOS` environment variables.
+Lay them out like this and it just works (the app looks **next to itself**):
 
-You can skip LoGos entirely if you only want to play and read numbers.
+```
+InfiniGo/
+├─ 玄清围弈.exe
+├─ KataGo/
+│  ├─ engine/katago.exe
+│  └─ weights/b11c768nbt.bin.gz, b18c384nbt-humanv0.bin.gz
+└─ LoGos/                        ← optional: skip it entirely if you don't want commentary
+   ├─ llama-server.exe
+   └─ LoGos-7B-Q4_K_M.gguf
+```
 
-**GPU**: LoGos Q4 needs ~4.4 GB VRAM (an 8 GB card is fine). It is not loaded by default,
-and the app is designed so KataGo and LoGos don't have to run at the same time.
+**Just want to play, no commentary?** Prepare only the KataGo files — the commentary
+features simply stay unused. Anywhere else works too: set it in the app's Settings, or
+via the `GOMATE_KATAGO` / `GOMATE_LOGOS` environment variables.
 
-### Run it
+### Option 1: download the portable build (recommended)
+
+Grab it from the **[Releases page](https://github.com/Rapace7/InfiniGo/releases)**:
+
+| File | Size | Notes |
+|---|---|---|
+| `InfiniGo-0.1.0-win-x64.zip` | ~147 MB | **unzip and run — fastest startup** ⭐ |
+| `InfiniGo-0.1.0-portable.exe` | ~96 MB | single file, double-click (unpacks to temp on each launch) |
+
+Drop the two engine folders next to it and you're done.
+
+### Option 2: run from source (to change the code)
 
 ```
 git clone https://github.com/Rapace7/InfiniGo.git
@@ -87,7 +140,13 @@ npm install
 start.bat            (double-click)
 ```
 
-Then open **Settings** (top-left) and point it at your files. Every field has a `?`
+In source mode the engines go **one level above** the project folder, or you point at
+them in Settings. `.npmrc` already carries Chinese mirrors so `npm install` is fast
+domestically.
+
+### Configure the paths
+
+Open **Settings** (top-left) and point it at your files. Every field has a `?`
 you can hover for what it is and where to find it:
 
 ![Settings](docs/screenshots/settings-help.png)
@@ -99,9 +158,16 @@ you can hover for what it is and where to find it:
 
 ## Notes on the commentary
 
-- **Speed**: ~2–4 s for a 150–200 character explanation on an RTX 4070 Laptop.
+- **Speed**: about 2–4 s for a 150–200 character explanation on an RTX 4070 Laptop.
   A full 200-move game takes roughly 8–12 minutes, can be stopped, and **resumes**
   where it left off.
+- **⚠️ The commentary is always in Chinese.** LoGos (a 7B model fine-tuned on
+  Chinese-annotated Go data) only outputs Chinese — even when both the system prompt
+  and the user prompt are in English, it still answers in Chinese. This isn't a setting
+  we can flip.
+  **The practical workaround**: the commentary is plain prose, so just **select it and
+  paste it into any translation tool or LLM** (Google Translate, DeepL, ChatGPT, etc.).
+  It translates cleanly, and Go terminology comes through fine.
 - **It makes mistakes**: LoGos is a 7B model. It sometimes uses the wrong technical
   term (calling a star point a komoku, etc.). **Positions are usually right, names may be wrong.**
   Trust KataGo's numbers over its wording.

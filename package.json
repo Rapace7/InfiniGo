@@ -3,13 +3,43 @@
   "productName": "玄清围弈",
   "version": "0.1.0",
   "description": "玄清围弈 —— 跟 AI 下棋、看客观数据、听本地模型讲棋",
+  "author": "Rapace7",
   "main": "main.js",
   "private": true,
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder --win"
   },
   "license": "MIT",
   "devDependencies": {
-    "electron": "^44.5.1"
+    "electron": "^44.5.1",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.rapace7.infinigo",
+    "productName": "玄清围弈",
+    "copyright": "Copyright © 2026 Rapace7",
+    "directories": { "output": "dist" },
+    "asar": false,
+    "files": [
+      "main.js",
+      "preload.js",
+      "renderer/**/*",
+      "engine.cfg",
+      "assets/app.ico",
+      "assets/audio/**/*",
+      "assets/icon-256.png",
+      "assets/icon-512.png",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        { "target": "portable", "arch": ["x64"] },
+        { "target": "zip", "arch": ["x64"] }
+      ],
+      "icon": "assets/app.ico",
+      "artifactName": "InfiniGo-${version}-win-x64.${ext}"
+    },
+    "portable": { "artifactName": "InfiniGo-${version}-portable.exe" }
   }
 }

@@ -18,15 +18,31 @@ const readline = require('readline');
 const { spawn } = require('child_process');
 const http = require('http');       // LoGos 靠 HTTP 说话（llama-server 托管）
 
+/* ---------- 「基准目录」：开发模式 vs 打包模式 ----------
+   ★ 这两种模式下"东西该放哪"完全不同，必须分开：
+     · 开发模式（`start.bat` / `npm start`）：代码就在项目目录，一切以 __dirname 为基准。
+     · 打包模式（免安装 exe）：代码在 `<安装目录>\resources\app\`，而**用户数据**
+       （settings.json / 棋谱 / 引擎日志）不该放那儿 —— 用户找不到，而且连同
+       "引擎放旁边"的约定也要以 exe 为准。
+       所以打包后基准取 **exe 所在目录**：数据都是用户看得见的文件夹，升级覆盖程序也不丢。
+   `app.isPackaged` 在 ready 之前就能用（不需要等 app ready）。 */
+const IS_PACKAGED = app.isPackaged;
+/* ★ 用 process.execPath 而不是 app.getPath('exe')：
+   后者在 app ready 之前调用会抛错，而这个常量是在**模块顶层**求值的 ——
+   一抛就是「主进程加载失败 → 窗口一闪就没」（打包版实测退出码 0，很难查）。
+   process.execPath 任何时候都能读，打包后它就是 exe 本身。 */
+const BASE_DIR = IS_PACKAGED ? path.dirname(process.execPath) : __dirname;
+
 /* ---------- 引擎位置 ----------
    ★ 2026-10-04 起**可在界面里改**（左上角「设置」→ 选 katago.exe 和两个权重），
      配置存在软件目录的 settings.json，启动时读它；读不到（首次运行 / 文件坏了）
      就用下面的默认值。环境变量 GOMATE_KATAGO 仍然认（临时覆盖用）。 */
-const CFG_FILE = path.join(__dirname, 'settings.json');
+const CFG_FILE = path.join(BASE_DIR, 'settings.json');
 /* 用 GoMate 自己的配置（复制自 KataGo 的 analysis.cfg，改了两处：
-   reportAnalysisWinratesAs → SIDETOMOVE、logDir 指向本目录），不动公共配置 */
+   reportAnalysisWinratesAs → SIDETOMOVE、logDir 由启动参数传），不动公共配置。
+   ★ engine.cfg 是**程序自带的**文件，所以跟代码走（__dirname），不跟数据走。 */
 const CFG = path.join(__dirname, 'engine.cfg');
-const LOG_DIR = path.join(__dirname, 'engine-logs');
+const LOG_DIR = path.join(BASE_DIR, 'engine-logs');
 
 /* LoGos（讲解模型）的默认目录 —— 2026-10-05 新增第三个「引擎」。
    它和 KataGo 长得不像：KataGo 是「stdin 喂 JSON / stdout 出 JSON」的长驻进程，
@@ -39,7 +55,7 @@ function defaultPaths() {
        ① 设置面板里改 → 存进 settings.json，下次打开就用你的；
        ② 环境变量 GOMATE_KATAGO / GOMATE_LOGOS。
      ★ 这里**不写死盘符** —— 那是本机耦合，换台电脑 / 换个盘就全废。 */
-  const up = path.join(__dirname, '..');
+  const up = IS_PACKAGED ? BASE_DIR : path.join(__dirname, '..');
   const root  = process.env.GOMATE_KATAGO || path.join(up, 'KataGo');
   const logos = process.env.GOMATE_LOGOS  || path.join(up, 'LoGos');
   return {
@@ -848,12 +864,14 @@ function makeDesktopShortcut() {
     /* ★ operation 只能用 'create'：实测 Electron 44 下 'replace' **一律返回 false**
        （哪怕目标文件确实存在且可写），所以要做成幂等就先删旧文件再建。 */
     try { fs.unlinkSync(link); } catch (e) { /* 本来就没有，正常 */ }
-    /* target 用 process.execPath = electron.exe 本体；第一个参数 = 应用目录。
+    /* target 用 process.execPath：
+       · 开发模式下它是 electron.exe，得再给一个「应用目录」参数；
+       · 打包后它就是「玄清围弈.exe」本身，**不能再给参数**（给了会被当成要打开的文件）。
        这样双击不会像 start.bat 那样闪一下黑框。 */
     const ok = shell.writeShortcutLink(link, 'create', {
       target: process.execPath,
-      args: '"' + __dirname + '"',
-      cwd: __dirname,
+      args: IS_PACKAGED ? '' : '"' + __dirname + '"',
+      cwd: IS_PACKAGED ? path.dirname(process.execPath) : __dirname,
       icon: ico,
       iconIndex: 0,
       description: name,
@@ -883,7 +901,7 @@ ipcMain.handle('engine:cancel', () => cancel(ENGINES.analyze));
    ★ 存放位置选**软件自己的目录**，不去动用户的「我的棋谱」——那是他自己的文件。
    ★ 删除走**系统回收站**（shell.trashItem），不 fs.unlink：万一误删还能捞回来。
    ★ 文件名统一过 safeRecName()：剥掉路径部分、替换非法字符，防止爬到目录外面去。 */
-const RECORDS_DIR = path.join(__dirname, 'records');
+const RECORDS_DIR = path.join(BASE_DIR, 'records');
 try { fs.mkdirSync(RECORDS_DIR, { recursive: true }); } catch (e) { /* 已存在就算了 */ }
 
 function safeRecName(n) {

@@ -19,6 +19,9 @@ records/
 # 开发期的临时产物：测试截图 / 中间日志 / 探针脚本
 _trash/
 
+# 打包输出（electron-builder 生成，发布时传 Release，不进仓库）
+dist/
+
 # ---------- 系统生成的垃圾 ----------
 Thumbs.db
 ehthumbs.db
