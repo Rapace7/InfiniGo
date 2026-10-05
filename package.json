@@ -40,6 +40,9 @@
       "icon": "assets/app.ico",
       "artifactName": "InfiniGo-${version}-win-x64.${ext}"
     },
-    "portable": { "artifactName": "InfiniGo-${version}-portable.exe" }
+    "portable": { "artifactName": "InfiniGo-${version}-portable.exe" },
+    "extraFiles": [
+      { "from": "下载讲解模型.bat", "to": "." }
+    ]
   }
 }
