@@ -33,6 +33,22 @@ const IS_PACKAGED = app.isPackaged;
    process.execPath 任何时候都能读，打包后它就是 exe 本身。 */
 const BASE_DIR = IS_PACKAGED ? path.dirname(process.execPath) : __dirname;
 
+/* ★★ 便携式的关键一步：把 **Electron 自己的用户数据**也拉进程序文件夹。
+   它默认写在 `%APPDATA%\RapaceGo`（C 盘的"应用数据"里），里面有页面缓存、
+   GPU 缓存、Local Storage 等。不改的话：
+     · 软件明明解压在 D 盘，却还要占 C 盘；
+     · **把文件夹删了也不干净**（C 盘还留着一份）。
+   这个软件要做成「整个文件夹拷走、删掉就彻底卸载」的形态，所以必须挪过来。
+   ★ 必须在 app ready 之前调用 setPath；老版本没有 sessionData，用 try 兜住。 */
+if (IS_PACKAGED) {
+  try {
+    const ud = path.join(BASE_DIR, 'userdata');
+    fs.mkdirSync(ud, { recursive: true });
+    app.setPath('userData', ud);
+    app.setPath('sessionData', ud);
+  } catch (e) { /* 极端情况失败就算了，不影响主功能 */ }
+}
+
 /* ---------- 引擎位置 ----------
    ★ 2026-10-04 起**可在界面里改**（左上角「设置」→ 选 katago.exe 和两个权重），
      配置存在软件目录的 settings.json，启动时读它；读不到（首次运行 / 文件坏了）
