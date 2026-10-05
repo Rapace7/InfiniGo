@@ -1,0 +1,15 @@
+{
+  "name": "infinigo",
+  "productName": "玄清围弈",
+  "version": "0.1.0",
+  "description": "玄清围弈 —— 跟 AI 下棋、看客观数据、听本地模型讲棋",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron ."
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^44.5.1"
+  }
+}

@@ -1,0 +1,21 @@
+# 统一换行符 —— 不加这个的话，Windows 上 git 会把文件里的 LF 换成 CRLF 写回工作区，
+# 于是每改一次都冒出一堆"全文件改动"的假 diff（跨平台协作时尤其乱）。
+
+# 默认：仓库里统一存 LF
+* text=auto eol=lf
+
+# Windows 批处理必须是 CRLF，不然可能跑不起来
+*.bat text eol=crlf
+
+# 二进制文件不要动
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.wav binary
+*.mp3 binary
+*.gguf binary
+*.bin binary
+*.gz binary
+*.exe binary
+*.dll binary

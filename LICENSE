@@ -1,0 +1,41 @@
+MIT License
+
+Copyright (c) 2026 InfiniGo (玄清围弈)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----------------------------------------------------------------------------
+NOTE ON THIRD-PARTY COMPONENTS
+
+This repository contains ONLY the application code (the Electron/HTML/JS
+files in this repo). It does NOT bundle any Go engine or neural-net weights.
+
+To actually run the app you need to supply your own:
+
+  * KataGo          - https://github.com/lightvector/KataGo
+                      Code and content released under the MIT license.
+  * KataGo weights  - https://katagotraining.org/
+  * LoGos (7B)      - https://huggingface.co/YichuanMa/LoGos-7B
+                      Model card lists Apache-2.0, but the project's own README
+                      states the data is CC BY-NC 4.0 and "for research use only".
+                      Treat it as NON-COMMERCIAL.
+  * llama.cpp       - https://github.com/ggml-org/llama.cpp  (MIT)
+                      Provides llama-server, used to serve the LoGos model.
+
+Those components keep their own licenses; nothing here changes them.

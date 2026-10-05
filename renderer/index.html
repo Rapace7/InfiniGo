@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>玄清围弈</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="topbar">
+  <span class="brand">玄清围弈</span>
+  <button id="btn-records" title="棋谱库：打开 / AI 复盘 / 备注 / 删除棋谱">棋谱库</button>
+  <button id="btn-settings" title="设置：选择 KataGo 程序和权重文件（改完自动重启引擎）">设置</button>
+  <button id="btn-help" title="帮助：这个软件能做什么、各功能在哪儿、快捷键一览">帮助</button>
+  <span class="status" id="status">尚未开局</span>
+
+  <!-- ★ 引擎状态灯（2026-10-05 新增）：引擎**默认不加载**，这里显示各自的当前状态
+       并可点开操作（加载 / 暂停 / 卸载）。为什么放顶栏：它是全局状态，
+       而胜率条那儿不再显示「正在加载」（用户要求）。 -->
+  <div class="engines" id="engines">
+    <button class="eng" id="eng-katago" data-key="katago"
+            title="KataGo —— 算胜率、目差、推荐点、形势、复盘，也负责 AI 落子。现在没加载（不占显存）。点一下看操作。">
+      <span class="dot"></span><span class="lb">KataGo</span>
+    </button>
+    <button class="eng" id="eng-coach" data-key="coach"
+            title="LoGos（书生·思客围棋版）—— 本地跑的讲解模型，用大白话讲棋。现在没加载（不占显存）。点一下看操作。">
+      <span class="dot"></span><span class="lb">LoGos</span>
+    </button>
+  </div>
+
+  <div class="spacer"></div>
+
+  <button id="btn-new" class="primary">新对局</button>
+
+  <div class="seg" id="seg-mode" title="人机对弈：只能下自己那方；摆棋 / 双人：两边都由你下（摆棋研究、或两人对下）">
+    <button data-v="play" class="on">人机对弈</button>
+    <button data-v="free">摆棋 / 双人</button>
+  </div>
+
+  <label class="field" title="KataGo 人类棋风模型的真实段位档位 —— 选中就真的按这个水平下">
+    对手棋力
+    <select id="sel-level"></select>
+  </label>
+</header>
+
+<main>
+  <!-- ★ 左栏（2026-10-05 新增，用户要求）：手数列表 + 两个讲解框放在一起。
+       为什么搬到左边：讲解是「对着某一手讲」的 —— 点手数列表换手、旁边就看讲解，
+       放一起最顺手。右栏留给纯数据（计时 / 胜率 / 对局信息 / 走势）。 -->
+  <aside class="left">
+    <div class="card grow col">
+      <p class="card-title">手数</p>
+      <ul class="movelist" id="movelist"></ul>
+    </div>
+
+    <!-- 分析讲解：点评**当前显示的那一手**（回看、打谱都能用） -->
+    <div class="card grow col">
+      <div class="coach-head">
+        <span class="card-title">分析讲解</span>
+        <button id="btn-batch" hidden title="打开棋谱后才有：把整盘棋从第一手讲到最后，结果跟这份棋谱存在一起 —— 下次打开这份棋谱，讲解还在（不用重跑）。跑一遍要几分钟，中途可以停。&#10;（和「AI 复盘」不是一回事：复盘给的是**数据报告**，这个给的是**逐手讲解**。）">全盘讲解</button>
+        <button id="btn-explain" title="点评当前显示的这一手 —— 好不好由 KataGo 的目损说了算，为什么这么下听 LoGos 讲。回看和打谱时都能用。">讲解这手</button>
+      </div>
+      <!-- 全盘讲解的进度条：只在跑的时候出现（平时 hidden） -->
+      <div class="batch-bar" id="batch-bar" hidden>
+        <div class="bb-track"><div class="bb-fill" id="batch-fill"></div></div>
+        <span class="bb-txt" id="batch-txt"></span>
+        <button id="batch-stop" title="停下来 —— 已经讲完的那几手会保留，下次再点会接着往下讲">停止</button>
+      </div>
+      <div class="coach-body" id="explain-body"></div>
+    </div>
+
+    <!-- 选点讲解：轮到某方时，讲「该走哪、为什么」（给几个推荐点分别讲） -->
+    <div class="card grow col">
+      <div class="coach-head">
+        <span class="card-title">选点讲解</span>
+        <button id="btn-pick" title="现在该走哪？给出几个推荐点，每个点分别讲理由（推荐点和胜率来自 KataGo，讲解来自 LoGos）。打谱时用不了。">给推荐点</button>
+      </div>
+      <div class="coach-body" id="pick-body"></div>
+    </div>
+  </aside>
+
+  <section class="board-wrap">
+    <!-- 终局结果条：浮在棋盘上方，不占布局（不挪动棋盘位置） -->
+    <div class="verdict" id="verdict" hidden>
+      <span class="vtext" id="verdict-text"></span>
+      <button id="verdict-close" title="收起（不影响对局，可随时按「数子」再看）">×</button>
+    </div>
+    <canvas id="board"></canvas>
+    <!-- 未开局（启动后的初始状态）：棋盘中央一个大胶囊按钮，点了才进「新对局」面板。
+         ★ 这时棋盘是点不动的（见 app.js 的 tryPlay / state.noGame）。 -->
+    <div class="board-gate" id="board-gate" hidden>
+      <button id="btn-gate-new" title="开始一局新的对局（也可以点顶栏的「新对局」，或直接打开一份棋谱）">新建对局</button>
+      <!-- 引擎没起来时，这里多一条指路的提示（正常启动时看不到） -->
+      <p class="gate-tip" id="gate-tip" hidden>引擎没起来 —— <a id="gate-setup">点这里去设置</a></p>
+    </div>
+  </section>
+
+  <aside class="side">
+
+    <!-- 计时器：左右两块（左黑右白），仅在启用计时时显示 -->
+    <!-- 计时卡（左黑右白）：**常显** —— 不限时的时候它也显示，因为双方名字栏就住在里面。
+         ⚠️ 不要再给它加 hidden 属性：CSS 里是 `.clock-card { display: flex }`，
+            浏览器默认的 `[hidden] { display: none }` 优先级更低、会被顶掉（根本藏不住）；
+            更麻烦的是哪天有人"顺手修好"这条 CSS，名字栏会跟着一起消失。 -->
+    <div class="clock-card" id="clock-card">
+      <div class="clock" id="clock-b">
+        <span class="stone b"></span>
+        <div class="cinfo">
+          <span class="cid" id="cid-b">PLAYER</span>
+          <span class="ctime" id="ctime-b">--:--</span>
+        </div>
+      </div>
+      <div class="clock" id="clock-w">
+        <span class="stone w"></span>
+        <div class="cinfo">
+          <span class="cid" id="cid-w">KATAGO</span>
+          <span class="ctime" id="ctime-w">--:--</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="card hint-card">
+      <!-- 形势判断：一条「左黑右白」的胜率条，两端各标自己的胜率与目数 -->
+      <div class="eval-head">
+        <div class="eval-side">
+          <span class="eval-pct" id="eval-wr">黑 —</span>
+          <span class="eval-sub" id="eval-lead">— 目</span>
+        </div>
+        <div class="eval-side right">
+          <span class="eval-pct" id="eval-wr-w">白 —</span>
+          <span class="eval-sub" id="eval-lead-w">— 目</span>
+        </div>
+      </div>
+      <div class="bar"><div class="bar-black" id="bar-black"></div></div>
+    </div>
+
+    <div class="card">
+      <p class="card-title">对局信息</p>
+      <!-- 只留 4 项（2026-10-04 用户要求「压缩占地」）：
+           模式 / 棋盘 / 我执 / 对手都去掉了 —— 顶栏本来就有模式切换和对手棋力下拉，
+           棋盘路数、执黑执白看盘面即知，留着只是重复占地方。省下的高度全给下面的手数栏。 -->
+      <ul class="moves two-col" id="info-list">
+        <li><span>规则</span><span class="wr" id="info-rules">中国规则</span></li>
+        <li><span>计时</span><span class="wr" id="info-clock">不限时</span></li>
+        <li><span>让子</span><span class="wr" id="info-hc">不让</span></li>
+        <li><span>贴目</span><span class="wr" id="info-komi">7.5</span></li>
+      </ul>
+    </div>
+
+    <!-- 走势图：**不撑满**（2026-10-05 用户要求「框拉小、下面留一大块备用」）——
+         所以这里没有 grow，卡片按内容高度（canvas 固定 76px），右栏底部自然留白。 -->
+    <div class="card col">
+      <!-- 纵轴可以切「黑方胜率 / 黑方领先目数」。
+           ★ 两者视角都固定是**黑方**（引擎给的是「轮走方」的，照那个画每手都要翻一次）——
+             所以标题里把「黑方视角」写出来，免得执白的人误以为红线是他的胜率。 -->
+      <div class="curve-head">
+        <span class="card-title">走势 <i class="dim">（黑方视角）</i></span>
+        <div class="seg mini" id="seg-curve">
+          <button data-v="win" class="on">胜率</button>
+          <button data-v="lead">目差</button>
+        </div>
+      </div>
+      <canvas id="curve"></canvas>
+    </div>
+
+  </aside>
+</main>
+
+<footer class="bottombar">
+  <button id="btn-first" title="第一手（Home）">|◀</button>
+  <button id="btn-prev" title="上一手（←）">◀</button>
+  <input type="range" id="slider" min="0" max="0" value="0">
+  <button id="btn-next" title="下一手（→）">▶</button>
+  <button id="btn-last" title="最后一手（End）">▶|</button>
+  <span class="counter" id="counter">0 / 0</span>
+  <div class="spacer"></div>
+
+  <!-- 三个显示开关挪到底栏（右侧栏腾出来放计时器） -->
+  <div class="toggles">
+    <!-- 「显示」下拉（2026-10-04 用户选的方案 A）：
+         这里原来平铺了 6 个开关 + 1 个形势画法下拉，在 1240 宽的窗口下
+         会把整条底栏挤成三行（第三行只剩两个按钮）。收进菜单后底栏回到一行。
+         ★ 只搬了位置，**所有 id 原样不变** —— 所以 app.js 里的 chk-xxx 绑定、
+           快捷键 T/Z/M/B/Y/X、以及 syncUI 的「开关状态单一来源」一个字都不用改。 -->
+    <div class="disp" id="disp">
+      <button id="btn-disp" title="显示与音效开关（快捷键：T 推荐点 · Z 坐标 · M 手数 · B 变化图 · X 形势 · Y 音效）">显示 ▾</button>
+      <div class="disp-menu" id="disp-menu" hidden>
+        <label class="toggle" title="在棋盘上显示 AI 推荐点（快捷键 T）">
+          <input type="checkbox" id="chk-show">
+          <span>推荐点（T）</span>
+        </label>
+        <label class="toggle" title="显示棋盘坐标 A–T / 1–19（快捷键 Z）">
+          <input type="checkbox" id="chk-coords">
+          <span>坐标（Z）</span>
+        </label>
+        <label class="toggle" title="在每颗棋子上标出它是第几手落下的（快捷键 M）">
+          <input type="checkbox" id="chk-nums">
+          <span>手数（M）</span>
+        </label>
+        <label class="toggle" title="变化图：把鼠标停在「推荐点」上约 1 秒，显示这一手之后预计的变化（半透明棋子 + 序号）（快捷键 B）">
+          <input type="checkbox" id="chk-pv">
+          <span>变化图（B）</span>
+        </label>
+        <label class="toggle" title="落子音效（快捷键 Y）">
+          <input type="checkbox" id="chk-sound" checked>
+          <span>音效（Y）</span>
+        </label>
+        <label class="toggle" title="形势显示：雾或方块表示每块地的归属，快死的子会自动变淡（快捷键 X）">
+          <input type="checkbox" id="chk-terr">
+          <span>形势（X）</span>
+        </label>
+        <select id="sel-terr" title="形势画法：雾 = 能看出「模糊地带」；方块 = 只显示已定的地，复盘更清楚">
+          <option value="fog">雾 + 死子变淡</option>
+          <option value="blocks">方块</option>
+        </select>
+      </div>
+    </div>
+
+    <span class="vlabel" title="计算深度：每个局面让引擎思考多少步。越大越准，但推荐点出现得越慢。改完立即生效（不用重开对局）。">计算深度</span>
+    <select id="sel-visits" title="分析深度：每个局面让引擎思考多少步。越大越准，但推荐点出现得越慢。改完立即生效，不用重开对局。"></select>
+    <label class="toggle" title="拟人落子：按「该段位人类会下哪」的概率随机挑一手（而不是总挑最优），明显要崩的手会被压下去 —— 更像真人，段位也更贴合标称水平（快捷键 N）">
+      <input type="checkbox" id="chk-human">
+      <span>拟人落子（N）</span>
+    </label>
+  </div>
+
+  <button id="btn-undo" title="悔棋（Ctrl+Z）">悔棋</button>
+  <button id="btn-draft" title="试下：在此处存档，两边随便接着下（不影响正式对局）">试下</button>
+  <button id="btn-pass" title="停一手（空格）">停一手</button>
+  <button id="btn-score" title="数子：按当前规则结算。双方都停一手会自动判；中途也能查（会标注非终局）">数子</button>
+  <button id="btn-resign" title="认输：本局判对方获胜">认输</button>
+  <button id="btn-save" title="导出为 SGF 棋谱">导出棋谱</button>
+</footer>
+
+<!-- 新对局设置 -->
+<div class="modal-mask" id="newgame">
+  <div class="modal">
+    <h2>新对局</h2>
+
+    <!-- 对局类型（2026-10-04 用户要求「分两块」）：
+         AI 对弈才有「我执」「对手棋力」；摆棋/双人没有「我方」这个概念，
+         所以那两行会藏起来 —— 原来摆棋时还让人选「我执」，纯属自找歧义。 -->
+    <div class="mrow">
+      <span class="mlabel">对局类型</span>
+      <div class="seg" id="seg-ntype">
+        <button data-v="play" class="on">AI 对弈</button>
+        <button data-v="free">摆棋 / 双人</button>
+      </div>
+    </div>
+
+    <div class="mrow">
+      <span class="mlabel">规则</span>
+      <select id="m-rules">
+        <option value="chinese" selected>中国规则（数子 · 贴 3¾ 子）</option>
+        <option value="japanese">日本规则（数目 · 贴 6.5 目）</option>
+        <option value="korean">韩国规则（数目 · 贴 6.5 目）</option>
+        <option value="ancient">明清规则（座子 · 还棋头 · 白先）</option>
+      </select>
+    </div>
+
+    <div class="mrow" id="row-color">
+      <span class="mlabel">我执</span>
+      <div class="seg" id="seg-color">
+        <button data-v="b" class="on">黑</button>
+        <button data-v="w">白</button>
+        <button data-v="r">随机</button>
+      </div>
+    </div>
+
+    <div class="mrow">
+      <span class="mlabel">棋盘</span>
+      <div class="seg" id="seg-size">
+        <button data-v="19" class="on">19 路</button>
+        <button data-v="13">13 路</button>
+        <button data-v="9">9 路</button>
+      </div>
+    </div>
+
+    <div class="mrow" id="row-level">
+      <span class="mlabel">对手棋力</span>
+      <select id="m-level"></select>
+    </div>
+
+    <p class="level-note" id="level-note"></p>
+
+    <div class="mrow" id="row-handicap">
+      <span class="mlabel" title="让子棋：黑方（被让的一方）开局先在角上摆好 N 个子，摆完后由白方先走。让子局按标准不贴目。">让子</span>
+      <div class="seg" id="seg-handicap">
+        <button data-v="0" class="on">不让</button>
+        <button data-v="2">2 子</button>
+        <button data-v="3">3 子</button>
+        <button data-v="4">4 子</button>
+        <button data-v="5">5 子</button>
+        <button data-v="6">6 子</button>
+        <button data-v="7">7 子</button>
+        <button data-v="8">8 子</button>
+        <button data-v="9">9 子</button>
+      </div>
+    </div>
+
+    <div class="mrow">
+      <span class="mlabel">贴目</span>
+      <div class="seg" id="seg-komi">
+        <button data-v="7.5" class="on">7.5</button>
+        <button data-v="6.5">6.5</button>
+        <button data-v="5.5">5.5</button>
+        <button data-v="0.5">0.5</button>
+        <button data-v="0">0（不贴目）</button>
+      </div>
+    </div>
+
+    <div class="mrow" id="row-clock">
+      <span class="mlabel">计时</span>
+      <select id="m-clock">
+        <option value="none" selected>不限时</option>
+        <option value="blitz">超快棋 · 每方 5 分 + 每手 5 秒</option>
+        <option value="rapid">快棋 · 30 分 + 3×30 秒读秒</option>
+        <option value="slow">慢棋 · 1 小时 + 5×60 秒读秒</option>
+        <option value="pro">职业赛 · 2 小时 + 5×60 秒读秒</option>
+        <option value="world">世界大赛 · 3 小时 + 5×60 秒读秒</option>
+      </select>
+    </div>
+
+    <div class="mrow">
+      <span class="mlabel">计算深度</span>
+      <select id="m-visits" title="每个局面让引擎思考多少步。越大越准，但推荐点出现得越慢（改完立即生效，不用重开对局）"></select>
+    </div>
+
+    <p class="level-note" id="visits-note"></p>
+
+    <p class="mhint" id="m-hint">
+      提示：学棋用「人类棋风」对手 + 让子，最容易看出「正常该往哪下」。
+    </p>
+
+    <div class="mfoot">
+      <button id="m-cancel">取消</button>
+      <button id="m-start" class="primary">开始</button>
+    </div>
+  </div>
+</div>
+
+<!-- 棋谱库：左上角「棋谱库」按钮打开 -->
+<div class="modal-mask" id="records">
+  <div class="modal rec-modal">
+    <h2>棋谱库 <span class="rec-dir" id="rec-dir"></span></h2>
+    <!-- 搜索 / 筛选（2026-10-04 用户要求）：按「备注名 + 文件名」模糊过滤，纯前端过滤不读盘 -->
+    <div class="rec-tools">
+      <input type="search" id="rec-search" placeholder="搜索备注名 / 文件名" autocomplete="off" spellcheck="false">
+      <span class="rec-count" id="rec-count"></span>
+    </div>
+    <ul class="reclist" id="reclist"></ul>
+    <div class="mfoot">
+      <button id="rec-import" title="从电脑里挑 SGF 棋谱文件，复制进棋谱库（可以多选；重名不会覆盖）">导入棋谱…</button>
+      <button id="rec-save-now">把当前对局存进来</button>
+      <button id="rec-open-dir">打开文件夹</button>
+      <div class="spacer"></div>
+      <button id="rec-close">关闭</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-mask" id="review">
+  <div class="modal rv-modal">
+    <div id="review-body"></div>
+  </div>
+</div>
+
+<!-- 引擎状态灯点开的小菜单：内容由 app.js 现填，fixed 定位在按钮下方 -->
+<div class="engmenu" id="engmenu" hidden></div>
+
+<!-- 设置：KataGo 程序 + 两个权重（左上角「设置」按钮打开） -->
+<div class="modal-mask" id="settings">
+  <div class="modal set-modal">
+    <h2>设置 <span class="set-sub">引擎与权重</span></h2>
+    <p class="set-lead">改完点「保存」就生效，不用重开软件。（引擎现在默认不加载，改路径不会自动拉起它们）</p>
+
+    <!-- ★ 2026-10-05 起分成两组（用户要求）：KataGo 管下棋/分析，LoGos 管讲解。
+         每组标题旁的「?」**鼠标悬停**就显示这组怎么配 —— 用纯 CSS 的 ::after 显示，
+         不需要 JS（内容就写在 data-tip 里，&#10; 是换行）。 -->
+    <div class="setgroup">
+      <h3>KataGo <span class="set-sub">下棋 · 分析</span>
+        <span class="qh" data-tip="这一组配的是「下棋和分析」用的引擎 —— 三个文件缺一不可。&#10;&#10;· KataGo 程序：katago.exe（官方包里在 engine 目录下）&#10;· 分析权重：算胜率、目差、推荐点、形势用的「强」模型 —— 文件名不带 human&#10;· 对弈权重：AI 落子用的「人类棋风」模型 —— 文件名必须带 human&#10;&#10;★ 最容易踩的坑：对弈权重一定得选带 human 的那个。&#10;   拿普通权重去当对手，引擎会直接报错退出 —— 它要读 humanSLProfile 段位档。&#10;&#10;选「KataGo 程序」的时候会自动去它旁边翻权重，找到就替你填上，省得手动找。">?</span>
+      </h3>
+
+      <div class="setrow">
+        <span class="setlb" title="KataGo 主程序。选完会自动去同目录（和它的上一级）找权重，找到就自动填上下面两项。">KataGo 程序</span>
+        <input type="text" id="set-katago" spellcheck="false" autocomplete="off" placeholder="…\engine\katago.exe">
+        <button id="pick-katago">选择…</button>
+        <span class="setmark" id="mark-katago">—</span>
+      </div>
+
+      <div class="setrow">
+        <span class="setlb" title="算胜率、推荐点、形势用的「强」模型（不带 human 字样的那个 .bin.gz）。">分析权重</span>
+        <input type="text" id="set-analyzeWeight" list="recent-analyzeWeight" spellcheck="false" autocomplete="off" placeholder="…\weights\*.bin.gz">
+        <button id="pick-analyzeWeight">选择…</button>
+        <span class="setmark" id="mark-analyzeWeight">—</span>
+      </div>
+
+      <div class="setrow">
+        <span class="setlb" title="AI 落子用的「人类棋风」模型（文件名带 human）—— 只有它认段位档。">对弈权重</span>
+        <input type="text" id="set-playWeight" list="recent-playWeight" spellcheck="false" autocomplete="off" placeholder="…\weights\*human*.bin.gz">
+        <button id="pick-playWeight">选择…</button>
+        <span class="setmark" id="mark-playWeight">—</span>
+      </div>
+    </div>
+
+    <div class="setgroup">
+      <h3>LoGos <span class="set-sub">讲解</span>
+        <span class="qh" data-tip="这一组配的是「讲解」功能 —— 让 AI 用大白话讲棋。&#10;不配也能正常下棋打谱，只是「分析讲解 / 选点讲解」用不了。&#10;&#10;· llama-server 程序：跑 LoGos 的推理引擎（llama.cpp 自带，官方包里叫 llama-server.exe）&#10;· 讲解模型权重：LoGos-7B 的 .gguf 文件（推荐 Q4_K_M，约 4.4 GB）&#10;&#10;★ 显存：Q4 的 7B 约占 4.4 GB，8GB 的卡放得下。&#10;   但它和 KataGo 不适合同时全速跑 —— 所以平时不加载、不占显存，&#10;   点顶栏「讲解」那个灯才会起，讲完可以卸载。&#10;&#10;★ 它和 KataGo 分工不同：KataGo 负责算准（胜率/目差），&#10;   LoGos 负责讲清（为什么这么下）。两个都装才最好用。">?</span>
+      </h3>
+
+      <div class="setrow">
+        <span class="setlb" title="跑 LoGos 的推理引擎（llama.cpp 官方包里的 llama-server.exe）。选完会自动去旁边找 .gguf 权重。">llama-server 程序</span>
+        <input type="text" id="set-coachServer" spellcheck="false" autocomplete="off" placeholder="…\llama-server.exe">
+        <button id="pick-coachServer">选择…</button>
+        <span class="setmark" id="mark-coachServer">—</span>
+      </div>
+
+      <div class="setrow">
+        <span class="setlb" title="LoGos 讲解模型的 .gguf 权重（推荐 Q4_K_M，约 4.4GB）。">讲解权重</span>
+        <input type="text" id="set-coachWeight" list="recent-coachWeight" spellcheck="false" autocomplete="off" placeholder="…\LoGos-7B-Q4_K_M.gguf">
+        <button id="pick-coachWeight">选择…</button>
+        <span class="setmark" id="mark-coachWeight">—</span>
+      </div>
+    </div>
+
+    <!-- 「最近用过的权重」下拉（2026-10-04 用户要求：权重多套并存、记住上次用的）：
+         选项由 main.js 的 recent 列表填 —— 点输入框就能挑，不用重走文件对话框。
+         用原生 datalist，不占额外界面。 -->
+    <datalist id="recent-analyzeWeight"></datalist>
+    <datalist id="recent-playWeight"></datalist>
+    <datalist id="recent-coachWeight"></datalist>
+
+    <p class="set-msg" id="set-msg"></p>
+
+    <div class="mfoot">
+      <button id="set-default" title="把五项都填回内置默认路径（还要点保存才生效）">恢复默认</button>
+      <button id="set-shortcut" title="在桌面放一个带图标的「玄清围弈」——双击就能开">在桌面创建快捷方式</button>
+      <div class="spacer"></div>
+      <button id="set-cancel">取消</button>
+      <button id="set-save" class="primary" title="保存路径。原本开着的引擎会用新配置重新加载，没开的保持不加载。">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 帮助：左上角「帮助」按钮打开。
+     内容全是静态文字（不依赖运行时状态），所以直接写在这儿 —— 不用 JS 生成。
+     ★ 改功能/改快捷键时记得回来同步这里，别让帮助跟软件说的不一样。 -->
+<div class="modal-mask" id="help">
+  <div class="modal help-modal">
+    <h2>帮助 <span class="help-sub">玄清围弈 · 用 KataGo 陪你下棋</span></h2>
+
+    <div class="help-body">
+      <p class="help-lead">
+        一个「<b>跟 AI 下棋、看客观数据、攒错题本</b>」的围棋工具。引擎是 KataGo ——
+        <b>分析</b>用最强模型（算胜率、目差、推荐点、形势），
+        <b>对弈</b>用人类棋风模型（按你选的段位，像真人一样下）。
+      </p>
+
+      <!-- 第一次使用：放在最前面（2026-10-04 用户要求做「引导」，但**不要自动弹窗** ——
+           做成随时能打开的一页；引擎没起来时棋盘中央还会给一条指路的提示）。 -->
+      <h3>第一次使用（3 步）</h3>
+      <ol class="help-steps">
+        <li><b>把引擎配上</b> —— 点左上角「设置」，选 <b>katago.exe</b>（两个权重会自动填好），
+          再点「保存并重启引擎」，等状态栏提示完成（几秒）。</li>
+        <li><b>开一局</b> —— 点棋盘中央的「新建对局」。先定对局类型：<b>AI 对弈</b>（跟 AI 下）
+          或<b>摆棋 / 双人</b>；跟 AI 下就挑一个<b>对手棋力</b>，拿不准就从 10 级附近开始
+          （赢两三盘就往上调一档）。</li>
+        <li><b>下完看数据</b> —— 右侧手数列表里每一手都标着「亏多少目」，走势图能看出大势起伏；
+          想整体回顾就点「棋谱库 → AI 复盘」，它会<b>黑白分开</b>算出一份报告。</li>
+      </ol>
+      <p class="help-tip">
+        <b>分工说清楚</b>：<b>算得准</b>的活归 KataGo —— 胜率、目差、推荐点、每手亏几目，
+        这些是它算出来的客观数字，不会瞎夸。<b>讲得清</b>的活归 LoGos（书生·思客围棋版）——
+        用大白话讲「这一手为什么好 / 差、当时 AI 想下哪」。
+        <b>两者装在一起最好用</b>：好在哪由 KataGo 说了算，为什么听 LoGos 讲。
+        （LoGos 是本地跑的小模型，偶尔会把术语说错 —— 位置通常对，叫法可能不准。）
+      </p>
+
+      <h3>界面分区</h3>
+      <table class="help-tb">
+        <tr><td>左上角</td><td>棋谱库 · <b>设置</b>（换引擎/权重）· <b>帮助</b>（就是本页）· 引擎状态灯（KataGo / 讲解）</td></tr>
+        <tr><td>顶栏右侧</td><td>新对局 · 模式（人机对弈 / 摆棋 · 双人）· 对手棋力</td></tr>
+        <tr><td>棋盘左侧</td><td><b>手数列表</b>（每手标着亏多少）· <b>分析讲解</b>（点评当前这一手，打谱也能用）· <b>选点讲解</b>（现在该走哪，给几个点分别讲）</td></tr>
+        <tr><td>棋盘右侧</td><td>形势条（胜率＋目数）· 对局信息 · 走势图（黑方视角，可切胜率/目差）</td></tr>
+        <tr><td>底栏</td><td>回看（|◀ ◀ ▶ ▶| ＋ 滑块）· <b>显示 ▾</b>（推荐点 / 坐标 / 手数 / 变化图 / 音效 / 形势 都在这个菜单里）· 计算深度 · 拟人落子 · 试下 / 停一手 / 数子 / 认输 / 导出棋谱</td></tr>
+      </table>
+
+      <h3>主要功能</h3>
+      <ul class="help-list">
+        <li><b>人机对弈</b><span>你一手、AI 一手。对手棋力在顶栏选 —— 是 KataGo 内置的<b>人类段位档</b>（20 级 ~ 9 段，是<b>非职业</b>的业余段位标尺）。另有两组可挑：<b>前AI时代段位</b>（2016 年 AlphaZero 之前的旧开局风格）、<b>职业棋风 · 按年份</b>（模仿职业棋手 / 强院生）。</span></li>
+        <li><b>让子</b><span>让 N 子＝<b>黑方</b>开局先在角上摆 N 个黑子，摆完由<b>白方</b>先走（让的是白方，也就是强的那一方，黑是被让的一方）。<b>让子局不贴目</b> —— 选了让子，贴目会自动变成 0。</span></li>
+        <li><b>拟人落子</b><span>打开后，AI 按「这个段位的人大概会下哪」的概率挑手，而不是永远挑最优点。更像真人，也更容易看出正常下法。</span></li>
+        <li><b>摆棋 / 双人</b><span>双方都由你下，用来研究变化、试布局（也可以两个人对着下）。从摆棋切回「AI 对弈」时会先问你一句 <b>AI 执哪一方</b>（摆棋时两边都是你在摆，得先把"谁是谁"定下来；不问的话 AI 可能突然自己落一手）。</span></li>
+        <li><b>试下（打草稿）</b><span>从当前局面存个档，两边随便接着下，不影响正式对局；再点一次「试下」回到原局面。</span></li>
+        <li><b>推荐点 / 变化图</b><span>棋盘上的圈是 AI 推荐点（圈内数字＝搜索次数）。鼠标停在推荐点上约 1 秒 → 显示这一手之后的预计变化（半透明棋子＋序号）。</span></li>
+        <li><b>形势显示</b><span>在底栏的「<b>显示 ▾</b>」菜单里（快捷键 X），两种画法：<b>雾</b>（能看出模糊地带）/ <b>方块</b>（只显示已定的地）。快死的子会自动变淡。</span></li>
+        <li><b>走势图</b><span>右上角可切「胜率 / 目差」。纵轴固定是<b>黑方视角</b>（上＝黑优），量程按本局自动铺满，旁边标出本局范围。</span></li>
+        <li><b>手数列表</b><span>每一手都跟着「涨跌」（亏或赚多少胜率），点一下跳到那一手。复盘后还会标出失误。</span></li>
+        <li><b>分析讲解</b><span>左栏中间那个框：点评<b>当前显示的这一手</b>。好不好看 KataGo 的胜率涨跌（和手数列表里那个「涨跌」是同一个数），为什么这么下听 LoGos 讲（它会先算一次「这一手之前，AI 想下哪」）。回看、打谱都能用。<b>每手各存一份</b>，切到哪手就看哪手；没讲过的那手会明说「还没有讲解」。</span></li>
+        <li><b>选点讲解</b><span>左栏下面那个框：轮到某方走时，给出<b>几个推荐点</b>，每个点单独讲一段理由。点位和胜率全部来自 KataGo（就是棋盘上画的那一批圈），LoGos 只负责补「为什么」。<b>打谱时用不了</b>（那是别人的棋，不替人支招）。它只留最近一次那份、不跟手数走。</span></li>
+        <li><b>全盘讲解</b><span><b>打开棋谱</b>后，「分析讲解」旁边会多出这个按钮：一次把整盘逐手讲完（先让 KataGo 把整盘算一遍，再逐手讲），等于把「分析讲解」自动按手数跑一整遍。<b>它和「AI 复盘」不是一回事</b> —— 复盘给的是数据报告（平均目损、失误手数、一致率），这个给的是可以逐手翻看的<b>文字讲解</b>。结果<b>跟这份棋谱存在一起</b>，下次打开它讲解直接就在，不用重跑。跑一遍要好几分钟，中途可以停；停下之后再点，是<b>接着往下讲</b>（讲过的不重讲）。</span></li>
+        <li><b>数子 / 认输</b><span>「数子」按当前规则结算，双方都停一手会自动判；「认输」判对方胜。</span></li>
+        <li><b>AI 复盘</b><span>整盘逐手重算，出一份报告：<b>黑白分开</b>的平均目损、失误手数、与 AI 首选的一致率、分阶段表现。搜多深在点「AI 复盘」时选（默认 500）。</span></li>
+        <li><b>棋谱库</b><span>打开 / AI 复盘 / <b>复盘报告</b>（看已存的，不重算）/ 备注 / 删除。列表里会标出「已复盘」和「带讲解」。棋谱存在软件目录的 <b>records/</b> 里。</span></li>
+        <li><b>对局计时</b><span>新对局里可选超快棋 / 快棋 / 慢棋 / 职业赛 / 世界大赛；右侧两块表显示双方用时，读秒会变色。</span></li>
+        <li><b>改名字</b><span>右侧的名字<b>点一下就能改</b>（比如把 PLAYER 改成你的名字），导出的棋谱会把名字写进去；打开带名字的棋谱（如古谱）也会自动显示。</span></li>
+        <li><b>设置</b><span>换 KataGo 程序或权重路径，保存后引擎自动重启，不用重开软件。</span></li>
+      </ul>
+
+      <h3>四种规则</h3>
+      <table class="help-tb">
+        <tr><td>中国（默认）</td><td>数子 · 贴 7.5 目</td></tr>
+        <tr><td>日本</td><td>数目 · 贴 6.5 目</td></tr>
+        <tr><td>韩国</td><td>数目 · 贴 6.5 目</td></tr>
+        <tr><td>明清</td><td>数子 + 还棋头 · 不贴目 · 四角座子、白先</td></tr>
+      </table>
+
+      <h3>快捷键</h3>
+      <table class="help-tb help-keys">
+        <tr><td>悔棋</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td></tr>
+        <tr><td>上一手 / 下一手</td><td><kbd>←</kbd> <kbd>→</kbd></td></tr>
+        <tr><td>跳到开头 / 最新</td><td><kbd>Home</kbd> <kbd>End</kbd></td></tr>
+        <tr><td>停一手</td><td><kbd>空格</kbd></td></tr>
+        <tr><td>显示开关</td><td>
+          <kbd>T</kbd> 推荐点 · <kbd>Z</kbd> 坐标 · <kbd>M</kbd> 手数 · <kbd>B</kbd> 变化图 ·
+          <kbd>Y</kbd> 音效 · <kbd>X</kbd> 形势 · <kbd>N</kbd> 拟人落子
+        </td></tr>
+        <tr><td>试下（打草稿）</td><td><kbd>D</kbd></td></tr>
+      </table>
+
+      <h3>数据怎么看</h3>
+      <ul class="help-list">
+        <li><b>黑方视角</b><span>所有胜率和目差都换算成「黑方」的（引擎原始是「轮到走棋那一方」的视角，若照原样画，每落一手曲线就要上下翻一次）。</span></li>
+        <li><b>亏几目</b><span>＝相邻两手的目差之差。也就是「这一手比上一手差了多少」。</span></li>
+        <li><b>段位档位</b><span>对手棋力里那「20 级 ~ 9 段」是<b>业余段位标尺</b>（官方没公布它对标哪个段位体系；最高档 9 段的位置大约是<b>业余顶尖、接近职业边缘</b>，<b>不是职业九段</b>）。明确是职业的只有「职业棋风 · 按年份」那一组。另外，默认的计算深度<b>会把该段位解不出的战术一起算掉、下得比标称强</b>，想贴近标称水平，就打开底栏的「拟人落子」。</span></li>
+        <li><b>估算水平</b><span>按整盘平均目损粗略换算的启发式，<b>仅供参考</b> —— KataGo 的段位档是「模仿某段位棋手」，官方没有与真实段位的换算表。想知道准的，挑一档跟 AI 下几盘看胜负更实在。</span></li>
+        <li><b>计算深度</b><span>底栏可调（默认 500）。搜得越多越准、但推荐点出得越慢；少于一两手能看清的差异，是噪声。</span></li>
+        <li><b>AI 准备中</b><span>刚启动那几秒，胜率条会显示「AI 准备中」—— 引擎还在预热，好了自动变数字。</span></li>
+      </ul>
+    </div>
+
+    <div class="mfoot">
+      <div class="spacer"></div>
+      <button id="help-close" class="primary">知道了</button>
+    </div>
+  </div>
+</div>
+
+<!-- 从「摆棋」切到「AI 对弈」时的确认（2026-10-04 用户要求）。
+     为什么要问：摆棋模式下**两边都是你在摆**，「我方」在切换那一刻是没有定义的 ——
+     不问就只能沿用上次开新局时的设置（界面上还看不到），而且一切过去如果正好轮到
+     那一方，AI 会立刻自己落一手，人完全没准备。 -->
+<div class="modal-mask" id="takeover">
+  <div class="modal">
+    <h2>切换到 AI 对弈</h2>
+    <p class="tk-turn" id="tk-turn">当前轮到 黑 落子</p>
+
+    <div class="mrow">
+      <span class="mlabel">AI 执</span>
+      <div class="seg" id="seg-tk-color">
+        <button data-v="b">黑</button>
+        <button data-v="w">白</button>
+      </div>
+    </div>
+
+    <p class="mhint" id="tk-note"></p>
+
+    <div class="mfoot">
+      <button id="tk-cancel">取消</button>
+      <button id="tk-ok" class="primary">确定</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

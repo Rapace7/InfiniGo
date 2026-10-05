@@ -1,0 +1,844 @@
+:root {
+  --bg: #f7f6f3;
+  --panel: #ffffff;
+  --line: #e6e3dc;
+  --line-soft: #f0eee9;
+  --text: #2c2c2a;
+  --text-dim: #8d8a83;
+  --accent: #2f6f5e;
+  --accent-soft: #e9f2ef;
+  --danger: #c0392b;
+  --r: 10px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font: 13px/1.5 "Microsoft YaHei", "PingFang SC", system-ui, sans-serif;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+.spacer { flex: 1; }
+.dim { color: var(--text-dim); }
+.small { font-size: 12px; line-height: 1.7; }
+
+/* ---------- 顶栏 ---------- */
+.topbar {
+  min-height: 50px;                  /* 原为固定 50px —— 折行后会不够高 */
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;                   /* ★ 同底栏：窄窗口时整块折行，不把元素挤扁 */
+  gap: 10px;
+  padding: 7px 14px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-size: 14px; font-weight: 600; letter-spacing: .3px; }
+.status { font-size: 12px; color: var(--text-dim); padding-left: 8px; border-left: 1px solid var(--line); }
+
+.field { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); }
+
+/* ★ 顶栏同底栏：按钮 / 下拉 / 标签都**不许被压窄**（否则文字挤成竖排）。
+   状态文字是次要信息，允许被压缩并用省略号截断 —— 优先保住右边的控件。 */
+.topbar button, .topbar select, .topbar .field, .topbar .brand { white-space: nowrap; flex: none; }
+.topbar .status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* ---------- 引擎状态灯（顶栏，2026-10-05 新增） ----------
+   两个小胶囊：KataGo / 讲解。圆点显示状态，点一下弹出操作菜单。
+   为什么要有它：引擎改成**手动加载**了（打开软件不再自动吃显存），
+   得让用户一眼看到「谁在跑、谁没跑、谁挂了」。 */
+.engines { display: flex; gap: 6px; flex: none; }
+.engines .eng {
+  display: flex; align-items: center; gap: 5px;
+  height: 24px; padding: 0 9px;
+  font: inherit; font-size: 11.5px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: var(--panel); color: var(--text-dim);
+  cursor: pointer; white-space: nowrap;
+}
+.engines .eng:hover { border-color: #cfcac0; color: var(--text); }
+.engines .eng .dot {
+  width: 7px; height: 7px; border-radius: 50%; flex: none;
+  background: #c3bfb6;                       /* 未加载 = 灰 */
+  transition: background .15s;
+}
+.engines .eng[data-state="ready"]  { color: var(--text); border-color: #cfe0d9; background: var(--accent-soft); }
+.engines .eng[data-state="ready"]  .dot { background: #3f9a72; }
+.engines .eng[data-state="paused"] { color: var(--text); border-color: #cfdce8; background: #eef4fa; }
+.engines .eng[data-state="paused"] .dot { background: #4a7fb5; }
+/* 「部分就绪」：KataGo 的两个进程只起了一个（黄点，别让人以为全好了） */
+.engines .eng[data-state="partial"] { color: var(--text); border-color: #e3d7bd; background: #faf5e9; }
+.engines .eng[data-state="partial"] .dot { background: #d9a441; }
+.engines .eng[data-state="loading"] .dot { background: #d9a441; animation: engPulse 1s ease-in-out infinite; }
+.engines .eng[data-state="error"]  { color: var(--danger); border-color: #eccfc9; }
+.engines .eng[data-state="error"]  .dot { background: #c0392b; }
+@keyframes engPulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+/* 状态灯点开的小菜单：**向下弹**（它在顶栏，下面空间多）
+   ★ z-index 要**低于**弹窗遮罩（.modal-mask 是 50）——
+     原来写 60，状态灯的小菜单会浮在弹窗上面（审查发现）。
+     也不能太低：要高于底栏的「显示 ▾」菜单（30）。 */
+.engmenu {
+  position: fixed; z-index: 45;
+  min-width: 148px; padding: 4px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 9px; box-shadow: 0 10px 26px rgba(0, 0, 0, .16);
+}
+.engmenu[hidden] { display: none; }
+.engmenu .mhead {
+  padding: 5px 9px 6px; font-size: 11px; line-height: 1.5;
+  color: var(--text-dim); border-bottom: 1px solid var(--line-soft); margin-bottom: 4px;
+}
+.engmenu button {
+  display: block; width: 100%; text-align: left;
+  height: 27px; padding: 0 9px;
+  border: 0; border-radius: 6px; background: transparent;
+  font: inherit; font-size: 12px; color: var(--text); cursor: pointer;
+}
+.engmenu button:hover { background: var(--accent-soft); }
+
+/* 底栏那组开关注释同理：整组不许被压，组内每个控件也不许 */
+.toggles > * { flex: none; white-space: nowrap; }
+
+/* 顶栏里的「人机对弈 / 摆棋」切换：和旁边按钮同高 */
+#seg-mode button { height: 28px; padding: 0 12px; }
+
+button {
+  height: 28px;
+  padding: 0 11px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+button:hover { background: #faf9f6; border-color: #d9d5cc; }
+button:active { background: #f2f0eb; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.primary:hover { background: #2a6354; }
+button:disabled { opacity: .4; cursor: default; }
+
+select {
+  height: 28px;
+  padding: 0 6px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+/* ---------- 主体 ---------- */
+main { flex: 1; display: flex; min-height: 0; }
+
+.board-wrap {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  position: relative;          /* 结果条要绝对定位在棋盘上方 */
+}
+#board { display: block; border-radius: 6px; cursor: pointer; }
+
+/* 终局结果条：浮在棋盘上方（不占布局，所以棋盘位置一点不变） */
+.verdict {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 8px 7px 16px;
+  background: rgba(255, 255, 255, .97);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, .10);
+  font-size: 15px;
+  white-space: nowrap;
+  max-width: calc(100% - 28px);
+}
+/* ★ 必须显式压过 [hidden]：.verdict 的 display:flex 优先级高于浏览器默认的
+   [hidden]{display:none}，不写这一条的话结果条会一直显示（空内容 + 一个 ×）。 */
+/* 形势画法下拉：跟底栏同高，字号压小一点，别把底栏挤满 */
+#sel-terr {
+  height: 24px;
+  padding: 0 4px 0 7px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-radius: 4px;
+  max-width: 128px;
+}
+#sel-terr:disabled { opacity: .4; cursor: default; }
+
+.verdict[hidden] { display: none; }
+.verdict .vtext b { color: #c0392b; font-weight: 600; }
+.verdict .vsub { font-size: 12px; color: var(--text-dim); }
+.verdict #verdict-close {
+  width: 22px; height: 22px; padding: 0; line-height: 1;
+  border-radius: 4px; font-size: 15px; color: var(--text-dim);
+}
+.verdict #verdict-close:hover { background: #f2f0eb; }
+#btn-resign { color: #c0392b; }
+#btn-resign:hover { color: #a93226; }
+
+/* ---------- 侧栏 ---------- */
+/* ★ 左栏（2026-10-05 新增，用户要求）：手数列表 + 两个讲解框。
+   宽度和右栏接近，棋盘两侧对称一点；内边距方向反过来（padding 在左，右为 0）。 */
+.left {
+  width: 284px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0 12px 14px;
+  min-height: 0;
+}
+/* 三张卡的高度分配：手数列表是高频操作（点着手数看讲解），给多一点；
+   选点讲解的内容最长（几个推荐点各一段），也给多一点；分析讲解居中。 */
+.left > .card:nth-child(1) { flex: 1.2; }
+.left > .card:nth-child(2) { flex: 1; }
+.left > .card:nth-child(3) { flex: 1.3; }
+
+/* 讲解卡的头：标题（占满剩余宽度）+ 右侧按钮 */
+.coach-head {
+  display: flex; align-items: center; gap: 6px;
+  flex: none; margin-bottom: 6px;
+}
+.coach-head .card-title { margin-bottom: 0; flex: 1; min-width: 0; }
+.coach-head button { height: 24px; padding: 0 9px; font-size: 11.5px; flex: none; }
+/* ---------- 全盘讲解的进度条（2026-10-05）----------
+   只在跑的时候露出来。★ 必须显式写 [hidden] 覆盖 ——
+   .batch-bar 自己是 flex，浏览器默认的 [hidden]{display:none} 压不过类选择器
+   （本项目已经因为这条踩过四次坑）。 */
+.batch-bar {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  flex-wrap: wrap; row-gap: 5px;        /* 两行：第一行整条进度条，第二行文字＋停止 */
+  margin: 0 0 7px; font-size: 11px; color: var(--text-dim);
+}
+.batch-bar[hidden] { display: none; }
+.bb-track {
+  flex: 1 0 100%;                       /* ★ 独占一整行 —— 否则文字一长，进度条被挤成一根线 */
+  height: 5px; border-radius: 999px;
+  background: rgba(0, 0, 0, .09); overflow: hidden;
+}
+.bb-fill {
+  height: 100%; width: 0%; border-radius: 999px;
+  background: var(--accent); transition: width .25s ease-out;
+}
+.bb-txt { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.batch-bar button { height: 21px; padding: 0 8px; font-size: 11px; flex: none; }
+/* 讲解正文：内部滚动；保留换行（模型给的是一段段带换行的话） */
+.coach-body {
+  flex: 1; min-height: 0; overflow-y: auto;
+  font-size: 12px; line-height: 1.75; color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+}
+.coach-body .ph { color: var(--text-dim); }          /* 占位提示 */
+.coach-body .src { color: var(--text-dim); font-size: 11px; }   /* 「来自 KataGo」之类的小字 */
+.coach-body .pnt {                                    /* 推荐点小标题 */
+  display: block; margin: 7px 0 2px; font-weight: 600;
+}
+.coach-body .pnt:first-child { margin-top: 0; }
+.coach-body .vok { color: var(--accent); }            /* 「和 AI 首选一致」这类好话 */
+/* 讲解「按字出」：每个新字带一次淡入（用户要求：新出现的字由淡转实）。
+   JS 侧是 makeTyper —— 自己按固定速度放字，不直接贴流式片段
+   （网络会把几个 token 攒成一块，贴上去就是「一顿一顿地跳」）。 */
+.coach-body .just { animation: coachCharIn .4s ease-out both; }
+@keyframes coachCharIn { from { opacity: .15; } to { opacity: 1; } }
+
+.side {
+  width: 296px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  /* ★ 2026-10-04 用户要求「压缩占地、手数栏显示多点」：把整栏的"零碎"一起收紧
+     （实测侧栏本来就撑满了 main 的高度 638px，只是被这几张卡吃光 ——
+      光压「对局信息」只省下 40px，所以间距/内边距也一并收到最小）。
+     省下的全部归底部那个 flex:1 的手数栏。 */
+  gap: 8px;
+  padding: 12px 14px 12px 0;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 9px 13px;
+}
+.card.grow { flex: 1; min-height: 112px; }
+.card.col { display: flex; flex-direction: column; }
+.card-title { font-size: 12px; color: var(--text-dim); margin-bottom: 5px; }
+
+/* 走势图标题行：左边标题、右边「胜率 / 目差」切换 */
+.curve-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 6px; margin-bottom: 5px;
+}
+.curve-head .card-title { margin-bottom: 0; }
+.seg.mini { gap: 3px; }
+.seg.mini button { height: 20px; padding: 0 7px; font-size: 11px; }
+.seg.mini button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+/* 胜率走势曲线（92 → 76：给手数栏让出十几像素） */
+/* 高度固定 76px —— 走势图卡**不撑满**右栏（用户要求：框拉小，下面留一大块备用）。
+   renderCurve 读的就是 clientHeight，窗口 resize 会重绘（resize() 里调的）。 */
+#curve { width: 100%; height: 76px; display: block; }
+
+/* 手数列表（可滚动、可点击跳转） */
+.movelist {
+  list-style: none; flex: 1; min-height: 0; overflow-y: auto;
+  font-size: 12px; font-variant-numeric: tabular-nums;
+}
+.movelist li { display: flex; align-items: baseline; gap: 6px; padding: 2px 5px; border-radius: 4px; cursor: pointer; }
+.movelist li:hover { background: rgba(0, 0, 0, .05); }
+.movelist li.cur { background: rgba(47, 111, 94, .16); }
+.movelist .no { width: 30px; flex: none; text-align: right; color: var(--text-dim); }
+.movelist .st { flex: none; font-weight: 600; }
+/* ★ .pt（落点坐标）必须 flex:none —— 否则会被 flex 压缩，坐标被截断
+   （实测：「D16」显示成「D1」，用户报过）。.dl（涨跌）同理。 */
+.movelist .pt { color: var(--text-dim); flex: none; }
+.movelist .dl { margin-left: auto; font-size: 11px; flex: none; }
+.movelist .dl.bad { color: #c0392b; }
+/* 试下（草稿）里下的手：整体压淡 + 标个「草」，免得回头忘了自己在草稿里 */
+.movelist li.draft .no, .movelist li.draft .st, .movelist li.draft .pt { opacity: .5; }
+.movelist .dft {
+  flex: none; font-size: 10px; line-height: 15px; padding: 0 4px; border-radius: 3px;
+  background: rgba(47, 111, 94, .14); color: var(--accent);
+}
+
+/* 试下按钮：常态不填色，处于试下状态才填色 */
+#btn-draft.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+#btn-draft.on:hover { background: #2a6354; }
+.movelist .empty { color: var(--text-dim); cursor: default; }
+
+/* 形势判断：两端各标一方，中间一条共用的胜率条（左黑右白） */
+.eval-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.eval-side { display: flex; flex-direction: column; line-height: 1.3; }
+.eval-side.right { align-items: flex-end; }
+.eval-pct { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.eval-sub { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+.bar {
+  height: 8px;
+  margin: 9px 0 10px;
+  border-radius: 4px;
+  overflow: hidden;
+  display: flex;
+  background: #ffffff;
+  border: 1px solid rgba(0, 0, 0, .16);
+}
+.bar-black { width: 50%; background: #2c2c2a; transition: width .25s; }
+
+.toggles { display: flex; align-items: center; gap: 12px; flex: none; }
+.toggle { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--text-dim); cursor: pointer; white-space: nowrap; }
+.toggle input { accent-color: var(--accent); cursor: pointer; flex: none; margin: 0; }
+
+/* ── 底栏的「显示」下拉（2026-10-04 方案 A）──
+   原来 6 个开关 + 形势画法下拉平铺在底栏，1240 宽下把底栏挤成三行。
+   收进这里之后底栏回到一行。菜单**往上弹** —— 底栏在最下面，往下弹会出屏。 */
+.disp { position: relative; flex: none; }
+.disp-menu {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  min-width: 172px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, .18);
+}
+/* ⚠️ 必须显式写：.disp-menu 是 display:flex，会把 [hidden] 的 display:none 压过去
+   （本项目第 5 次踩这个坑 —— 前四次是 .verdict / .board-gate / .mrow / .clock-card） */
+.disp-menu[hidden] { display: none; }
+.disp-menu .toggle { color: var(--text); }
+.disp-menu select { width: 100%; }
+
+/* ── 计时器（样式参考围棋直播的计时面板：深蓝底 + 圆棋子 + ID + 大号时间）── */
+.clock-card {
+  flex: none;
+  display: flex;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.clock {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 12px;      /* 用户要求「矩形加高一点」：10/11 → 14/12 */
+  border-radius: 6px;
+  background: linear-gradient(180deg, #17507a, #123f60);
+  border: 1px solid rgba(255, 255, 255, .22);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .08);
+  transition: box-shadow .18s, border-color .18s;
+}
+/* 轮到谁，谁的框就亮起来 */
+.clock.active { border-color: rgba(255, 236, 160, .85); box-shadow: 0 0 0 1px rgba(255, 236, 160, .35), inset 0 0 0 1px rgba(255, 255, 255, .1); }
+.clock.out { opacity: .5; }                       /* 已超时 */
+.clock .stone {
+  width: 22px; height: 22px; border-radius: 50%; flex: none;   /* 用户要求缩小；顺带又给名字腾了宽度 */
+}
+.clock .stone.b { background: radial-gradient(circle at 32% 28%, #6d6d6a, #0b0b0b 68%); }
+.clock .stone.w { background: radial-gradient(circle at 32% 28%, #ffffff, #cfcfc9 72%); border: 1px solid rgba(0, 0, 0, .18); }
+.clock .cinfo { min-width: 0; display: flex; flex-direction: column; line-height: 1.15; }
+/* 名字放大（10.5px → 16px，两次按用户要求加大）；卡片窄，所以棋子收细、间距收紧，
+   保证「PLAYER1」这种 7 字符的默认名也放得下（16px 下约 66px，可用约 71px）。
+   ★ 字重**不要用 600**（用户反馈「复杂的字看着臃肿」）：Windows 的雅黑只有
+     Regular(400)/Bold(700) 两档，600 会落到 Bold（或浏览器合成加粗）——
+     「范」「襄」这种笔画多的字在 16px 下加粗就糊成一团了。
+     改回 400，靠**字号 + 提亮**来突出（不提粗）。 */
+.clock .cid {
+  font-size: 16px; font-weight: 400; letter-spacing: .3px; color: #e6f0f9;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.clock .ctime {
+  font-size: 21px; font-weight: 600; color: #eef6fb;
+  font-variant-numeric: tabular-nums; letter-spacing: .5px;
+}
+/* 不限时：时间位是一串灰占位（--:--）。★ 用户要求「时间显示太小」→ 从 12px 提到 17px
+   （比名字 16px 略大，层次还在）；颜色压暗，主角仍然交给名字。 */
+.clock .ctime.off { color: rgba(238, 246, 251, .34); font-size: 17px; letter-spacing: .4px; }
+/* 名字可以点着改（与计时无关，常显） */
+.clock .cid.editable { cursor: pointer; border-bottom: 1px dashed rgba(159, 198, 226, .45); }
+.clock .cid.editable:hover { color: #cfe6f6; border-bottom-color: rgba(207, 230, 246, .8); }
+.clock .cid input {
+  width: 100%; min-width: 62px; height: 15px;
+  font: inherit; font-size: 10.5px; letter-spacing: 0;
+  padding: 0 3px; border: 1px solid rgba(255, 255, 255, .55); border-radius: 3px;
+  background: rgba(9, 31, 48, .92); color: #eef6fb; outline: none;
+}
+.clock.byo .ctime { color: #ffd66b; }             /* 读秒中：时间变黄 */
+.clock.byo .cid { color: #ffd66b; }
+.clock.out .ctime { color: #ff8f7d; }
+
+/* 对局信息两列 —— 值都缩短过（括号说明已去掉），一列宽约 128px 放得下；
+   右侧栏窄，一列会把高度吃掉，挤掉下面的手数列表。 */
+.moves.two-col { display: grid; grid-template-columns: 1fr 1fr; column-gap: 14px; }
+.moves.two-col li { border-top: none; padding: 2.5px 0; }
+.moves.two-col .wr { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 关掉「显示推荐点与胜率」时，右侧数据整体变灰 */
+/* 注：原来这里有一条 `body.hints-off .hint-card { opacity: .28 }` ——
+   把右侧整块数据都变暗了。但那个开关只管「棋盘上的推荐点」，
+   右边胜率是始终要显示的客观数据，不该被它影响，所以删掉。 */
+
+.moves { list-style: none; font-size: 13px; }
+.moves li { display: flex; justify-content: space-between; padding: 4px 0; }
+.moves li + li { border-top: 1px solid var(--line-soft); }
+.moves .pt { font-weight: 600; }
+.moves .wr { color: var(--text-dim); font-variant-numeric: tabular-nums; }
+
+/* ---------- 底栏 ---------- */
+.bottombar {
+  min-height: 48px;                  /* 原为固定 48px —— 折行后会不够高 */
+  flex: none;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;                   /* ★ 窗口变窄时**整块折到下一行**，而不是把每个元素挤扁 */
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--panel);
+  border-top: 1px solid var(--line);
+}
+/* ★ 底栏里的按钮和计数器一律**不许被压窄**。
+   否则 flex 会把按钮挤扁 → 文字换行：用户实测截图里「悔棋」变成竖排的「悔/棋」、
+   「停一手」变成「停/一/手」。
+   nowrap 保证文字一行；flex:none 保证不被压缩；真放不下时交给上面的 flex-wrap 整块折行。 */
+.bottombar button,
+.bottombar .counter { white-space: nowrap; flex: none; }
+#slider { flex: 1; max-width: 340px; min-width: 90px; accent-color: var(--accent); cursor: pointer; }
+.counter { font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; margin-left: 2px; }
+
+/* 未开局：棋盘中央的「新建对局」大胶囊按钮（2026-10-04 用户要求）。
+   浮在棋盘正中间、足够大，一眼就知道该点它。
+   ⚠️ 必须显式写 [hidden] 那条 —— .board-gate 的 display:flex 优先级高于
+      浏览器默认的 [hidden]{display:none}，不写就藏不起来（.verdict 踩过同一个坑）。 */
+.board-gate {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;      /* ★ 竖排：按钮在上、指路提示在下（横排会挤成一行） */
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;        /* 只有按钮本身吃点击，其余地方不挡 */
+}
+.board-gate[hidden] { display: none; }
+/* 引擎没起来时的指路提示（跟在「新建对局」下面） */
+.board-gate .gate-tip {
+  pointer-events: auto;
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  color: #fff;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, .55);
+}
+.board-gate .gate-tip a { color: #fff; text-decoration: underline; cursor: pointer; }
+.board-gate .gate-tip[hidden] { display: none; }
+.board-gate button {
+  pointer-events: auto;
+  font-family: inherit;
+  font-size: 17px;
+  font-weight: 600;
+  letter-spacing: .5px;
+  /* ★ 必须显式覆盖全局 `button { height: 28px }` —— 不然 padding 被它压掉，
+     按钮扁成 32px、文字还会溢出来（2026-10-04 实测踩到）。 */
+  height: auto;
+  line-height: 1.2;
+  padding: 15px 38px;
+  border-radius: 999px;        /* 胶囊 */
+  border: 1px solid rgba(0, 0, 0, .10);
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 10px 26px rgba(0, 0, 0, .28);
+  transition: filter .12s, transform .12s;
+}
+.board-gate button:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.board-gate button:active { transform: translateY(0); }
+
+/* 切换确认弹窗里那行「当前轮到 X 落子」—— 要一眼看见，所以给个浅底色 */
+.tk-turn {
+  font-size: 13px;
+  color: var(--text);
+  background: var(--accent-soft);
+  border-radius: 8px;
+  padding: 9px 11px;
+  margin: 0 0 14px;
+}
+
+/* ---------- 新对局设置 ---------- */
+.modal-mask {
+  position: fixed;
+  top: 0; right: 0; bottom: 0; left: 0;
+  background: rgba(24, 22, 18, .34);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.modal-mask.open { display: flex; }
+
+.modal {
+  width: 470px;
+  background: var(--panel);
+  border-radius: 14px;
+  padding: 20px 22px 16px;
+  box-shadow: 0 18px 48px rgba(0, 0, 0, .2);
+}
+.modal h2 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+
+/* ---------- 棋谱库弹窗 ---------- */
+.rec-modal { width: 580px; max-height: 78vh; display: flex; flex-direction: column; }
+.rec-modal h2 { display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; }
+.rec-dir { font-size: 11px; font-weight: 400; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reclist { list-style: none; flex: 1; overflow-y: auto; margin: 0 0 12px; min-height: 96px; max-height: 54vh; }
+
+/* 棋谱库顶部工具条：搜索框 + 「共 N 份 / 筛出 M 份」计数 */
+.rec-tools { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; }
+.rec-tools input {
+  flex: 1; min-width: 0; height: 28px; font: inherit; font-size: 12px;
+  padding: 0 9px; border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; color: var(--text);
+}
+.rec-tools input:focus { outline: none; border-color: var(--accent); }
+.rec-count { flex: none; font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
+.reclist li { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px; font-size: 12.5px; }
+.reclist li:hover { background: rgba(0, 0, 0, .045); }
+/* 棋谱条目：上行备注名 + 下行真实文件名（用户要求两个都显示） */
+.reclist .rec-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.reclist .rec-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reclist .rec-file { font-size: 10.5px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reclist .rec-meta { flex: none; font-size: 11px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.reclist li button { height: 24px; padding: 0 9px; font-size: 11.5px; flex: none; }
+.reclist .empty { display: block; text-align: center; padding: 26px 0; color: var(--text-dim); cursor: default; }
+/* 备注（改名）：就地展开的输入框 */
+.reclist li input {
+  flex: 1; min-width: 0; height: 24px; font: inherit; font-size: 12.5px;
+  padding: 0 7px; border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; color: var(--text);
+}
+.reclist button.danger { color: #c0392b; border-color: rgba(192, 57, 43, .45); }
+
+.mrow { display: flex; align-items: center; gap: 12px; margin-bottom: 11px; }
+.mrow:last-of-type { margin-bottom: 0; }
+.mlabel { width: 70px; flex: none; font-size: 12px; color: var(--text-dim); }
+
+.seg { display: flex; gap: 5px; flex-wrap: wrap; }
+.seg button { height: 26px; padding: 0 10px; }
+.seg button.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.seg button.on:hover { background: #2a6354; }
+/* 该选项在当前规则下不可用（如明清座子制下不能同时让子） */
+.seg button:disabled { opacity: .35; cursor: not-allowed; }
+.seg button:disabled:hover { background: var(--panel); }
+
+.mrow select { flex: 1; }
+
+/* 选中档位后显示「这个档位大概什么水平」（紧跟棋力下拉，左边缩进对齐下拉框） */
+.level-note {
+  font-size: 12px;
+  color: var(--accent);
+  line-height: 1.55;
+  margin: -3px 0 12px 82px;
+  min-height: 19px;
+}
+
+.mhint {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.75;
+  margin: 14px 0 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+.mfoot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+/* ---------- AI 复盘 ---------- */
+.rv-modal { width: 580px; max-height: 82vh; overflow: auto; }
+.rv-modal h2 { margin-bottom: 4px; }
+.rv-name { font-size: 12px; font-weight: 400; color: var(--text-dim); margin-left: 8px; }
+.rv-sub { font-size: 12px; color: var(--text-dim); margin-bottom: 14px; }
+
+/* 复盘中（进度） */
+.rv-wait { font-size: 14px; margin-bottom: 12px; }
+.rv-bar { height: 6px; background: var(--line-soft); border-radius: 3px; overflow: hidden; }
+.rv-bar i { display: block; height: 100%; background: var(--accent); transition: width .25s; }
+.rv-wait-sub { font-size: 12px; color: var(--text-dim); margin-top: 8px; font-variant-numeric: tabular-nums; }
+.rv-wait-tip { font-size: 11px; color: var(--text-dim); margin-top: 10px; line-height: 1.7; }
+
+/* 复盘搜索量选档（点「AI 复盘」后先让他选，默认 500） */
+.rv-picks { margin-bottom: 10px; }
+.rv-picks button { height: 28px; padding: 0 11px; font-variant-numeric: tabular-nums; }
+.rv-pick-note {
+  font-size: 12px; color: var(--accent); line-height: 1.6;
+  margin: 0 0 14px; min-height: 19px;
+}
+
+/* 四张指标卡 */
+.rv-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+.rv-card {
+  background: var(--bg); border-radius: var(--r); padding: 10px 10px 8px;
+  display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.rv-lb { font-size: 11px; color: var(--text-dim); }
+.rv-big { font-size: 19px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.rv-un { font-size: 11px; font-weight: 400; color: var(--text-dim); margin-left: 3px; }
+.rv-rank { font-size: 14px; }
+.rv-sub2 { font-size: 10px; color: var(--text-dim); }
+
+/* 分段表 */
+.rv-seg { width: 100%; font-size: 12px; border-collapse: collapse; margin-bottom: 14px; }
+.rv-seg th { text-align: right; font-weight: 400; color: var(--text-dim); font-size: 11px; padding: 3px 0; }
+.rv-seg th:first-child, .rv-seg td:first-child { text-align: left; }
+.rv-seg td {
+  text-align: right; padding: 4px 0; border-top: 1px solid var(--line-soft);
+  font-variant-numeric: tabular-nums;
+}
+.rv-dim { color: var(--text-dim); font-size: 11px; }
+
+/* 失误清单（点一下跳到那一手） */
+.rv-h { font-size: 12px; font-weight: 600; margin: 4px 0 6px; }
+.rv-bl { list-style: none; }
+.rv-bl li {
+  display: flex; align-items: center; gap: 8px; font-size: 12px;
+  padding: 5px 6px; border-radius: 6px; cursor: pointer;
+}
+.rv-bl li:hover { background: var(--accent-soft); }
+.rv-no { flex: none; width: 58px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+.rv-col { flex: none; font-weight: 600; }
+.rv-pt { flex: none; width: 50px; }
+.rv-loss { flex: none; margin-left: auto; font-variant-numeric: tabular-nums; }
+.rv-best { flex: none; width: 104px; text-align: right; color: var(--text-dim); font-size: 11px; }
+
+.rv-note {
+  font-size: 11px; color: var(--text-dim); line-height: 1.75;
+  margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line-soft);
+}
+.rv-note b { color: var(--text); }
+
+/* 目损分级配色 —— 手数列表与失误清单共用。
+   档位照 KaTrain：12 / 6 / 3 / 1.5 / 0.5 目。 */
+.rv-lv1 { color: #9a8f7a; }
+.rv-lv2 { color: #b8860b; }
+.rv-lv3 { color: #d2691e; }
+.rv-lv4 { color: var(--danger); font-weight: 600; }
+.rv-lv5 { color: #8e1b0f; font-weight: 700; }
+.rv-ok { color: var(--text-dim); opacity: .55; }
+
+/* 黑白分开统计（v2 复盘报告）——
+   两张画像并排 + 分段表四列 + 失误清单分两段。 */
+.rv-sides { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+.rv-side { background: var(--bg); border-radius: var(--r); padding: 10px 12px 8px; min-width: 0; }
+.rv-side-h {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; font-weight: 600; margin-bottom: 7px;
+}
+.rv-side-h .rv-dim { margin-left: auto; font-weight: 400; }
+/* 黑白小圆点（黑白棋子观感）—— .rv-bl-h 也复用 */
+.dot { width: 11px; height: 11px; border-radius: 50%; flex: none; display: inline-block; }
+.dot.b { background: #2c2c2a; }
+.dot.w { background: #fff; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .28); }
+.rv-kv {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  font-size: 12px; padding: 2.5px 0;
+}
+.rv-kv > span { color: var(--text-dim); flex: none; }
+.rv-kv > b { font-variant-numeric: tabular-nums; text-align: right; }
+.rv-kv-sub { font-size: 10.5px; color: var(--text-dim); text-align: right; margin-top: -1px; }
+.rv-est { font-size: 12.5px; }
+.rv-bl-h {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12px; font-weight: 600; margin: 8px 0 4px;
+}
+.rv-bl-empty { font-size: 12px; color: var(--text-dim); padding: 2px 0 4px 17px; }
+.rv-warn {
+  font-size: 12px; color: var(--danger); line-height: 1.8;
+  background: rgba(192, 57, 43, .07); border-radius: var(--r);
+  padding: 10px 12px; margin-bottom: 14px;
+}
+.rv-warn b { color: var(--danger); }
+
+/* ---------- 设置（KataGo 程序 + 权重） ---------- */
+/* ---------- 设置面板：分组 + 「?」悬停说明（2026-10-05 用户要求） ----------
+   面板分成两组（KataGo / LoGos），每组标题旁一个「?」——
+   **鼠标悬停**就显示这组怎么配。
+   实现是纯 CSS 的 ::after（内容从 data-tip 取，&#10; 换行靠 white-space: pre-line），
+   不需要 JS。能这么干的前提：.modal 没有 overflow（不会把浮层裁掉）。 */
+.setgroup { margin: 0 0 15px; }
+.setgroup h3 {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; font-weight: 600; color: var(--text);
+  margin: 0 0 9px; padding-bottom: 6px;
+  border-bottom: 1px solid var(--line-soft);
+}
+.setgroup h3 .set-sub { margin-left: 0; }
+.qh {
+  position: relative; flex: none;
+  width: 15px; height: 15px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line); background: var(--panel);
+  color: var(--text-dim); font-size: 10px; font-weight: 700; line-height: 1;
+  cursor: help; user-select: none;
+}
+.qh:hover { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.qh::after {
+  content: attr(data-tip);
+  position: absolute; left: -14px; top: calc(100% + 9px);
+  width: 336px; padding: 11px 13px;
+  background: #2c2c2a; color: #f5f3ef;
+  font-size: 11.5px; font-weight: 400; line-height: 1.75;
+  white-space: pre-line; text-align: left;
+  border-radius: 9px; box-shadow: 0 12px 30px rgba(0, 0, 0, .3);
+  opacity: 0; visibility: hidden; pointer-events: none;
+  transition: opacity .12s; z-index: 30;
+}
+.qh:hover::after { opacity: 1; visibility: visible; }
+
+.set-modal { width: 640px; }
+.set-sub { font-size: 12px; font-weight: 400; color: var(--text-dim); margin-left: 8px; }
+.set-lead { font-size: 12px; color: var(--text-dim); line-height: 1.7; margin: -6px 0 14px; }
+.setrow { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.setlb {
+  width: 86px; flex: none; font-size: 12px; color: var(--text-dim);
+  white-space: nowrap; cursor: help;
+}
+.setrow input {
+  flex: 1; min-width: 0; height: 28px; font: inherit; font-size: 12px;
+  padding: 0 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; color: var(--text);
+}
+.setrow input:focus { outline: none; border-color: var(--accent); }
+.setrow button { height: 28px; padding: 0 10px; font-size: 12px; flex: none; }
+.setmark { flex: none; width: 64px; font-size: 11.5px; text-align: right; color: var(--text-dim); }
+.setmark.ok { color: var(--accent); }
+.setmark.bad { color: var(--danger); }
+.set-msg {
+  font-size: 12px; line-height: 1.7; color: var(--accent);
+  margin: 12px 0 0; min-height: 20px; word-break: break-all;
+}
+.set-msg.bad { color: var(--danger); }
+
+/* 「新对局」面板里按对局类型显隐的行（摆棋/双人不需要「我执」「对手棋力」）。
+   ⚠️ .mrow 是 display:flex，会把浏览器默认的 [hidden]{display:none} 压过去 ——
+   必须显式写这条（本项目在 .verdict / .board-gate 上已经踩过两次）。 */
+.mrow[hidden], .level-note[hidden] { display: none; }
+
+/* 底栏「计算深度」的标签（跟 .toggle 的文字一个观感，且不许被压缩） */
+.bottombar .vlabel {
+  flex: none;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+/* ---------- 帮助（左上角「帮助」按钮） ----------
+   内容全静态、比较长，所以做成「标题 + 可滚动正文 + 固定按钮」三明治，
+   正文自己滚，底部的「知道了」永远看得见（不用滚到底才点得到）。 */
+.help-modal { width: 660px; max-height: 84vh; display: flex; flex-direction: column; }
+.help-modal h2 { margin-bottom: 10px; }
+.help-sub { font-size: 12px; font-weight: 400; color: var(--text-dim); margin-left: 8px; }
+
+.help-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px; }
+.help-body p { font-size: 12.5px; line-height: 1.8; margin: 0 0 10px; }
+.help-tip {
+  padding: 9px 11px; margin-bottom: 14px;
+  border-radius: 8px;
+  background: rgba(47, 111, 94, .08);
+  color: var(--text);
+}
+.help-body h3 {
+  font-size: 12.5px; font-weight: 600; color: var(--accent);
+  margin: 16px 0 8px; padding-left: 8px;
+  border-left: 3px solid var(--accent);
+}
+.help-body h3:first-child { margin-top: 0; }
+
+.help-list { list-style: none; margin: 0; padding: 0; }
+.help-list li {
+  display: flex; gap: 10px;
+  padding: 6px 0; font-size: 12.5px; line-height: 1.7;
+  border-bottom: 1px dashed var(--line-soft);
+}
+.help-list li:last-child { border-bottom: none; }
+.help-list li > b { flex: none; width: 96px; font-weight: 600; color: var(--text); }
+.help-list li > span { color: var(--text-dim); }
+.help-list li > span b { color: var(--text); }
+
+/* 帮助面板里的「第一次使用（3 步）」有序列表 */
+.help-steps { margin: 0 0 12px; padding-left: 22px; }
+.help-steps li { font-size: 12.5px; line-height: 1.8; margin-bottom: 6px; color: var(--text-dim); }
+.help-steps li b { color: var(--text); }
+
+.help-tb { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.help-tb td { padding: 6px 0; vertical-align: top; line-height: 1.7; border-bottom: 1px dashed var(--line-soft); }
+.help-tb tr:last-child td { border-bottom: none; }
+.help-tb td:first-child { width: 116px; color: var(--text-dim); white-space: nowrap; }
+.help-keys td:first-child { width: 140px; }
+.help-keys kbd {
+  display: inline-block; min-width: 18px;
+  padding: 0 5px; margin-right: 2px;
+  font-family: Consolas, "Courier New", monospace; font-size: 11.5px;
+  color: var(--text); text-align: center;
+  background: #fff; border: 1px solid var(--line); border-bottom-width: 2px;
+  border-radius: 4px;
+}
