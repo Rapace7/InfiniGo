@@ -116,8 +116,12 @@ RapaceGo/
    └─ LoGos-7B-Q4_K_M.gguf
 ```
 
+> **Already grabbed `LoGos-7B-Q4_K_M.gguf.part01 / .part02 / .part03` yourself?**
+> Then the .bat is unnecessary — see the **▶ Click to expand** section just below,
+> it merges them with one command.
+
 <details>
-<summary><b>Already downloaded the three .part files? Merge them yourself instead of using the .bat</b></summary>
+<summary><b>▶ Click to expand: already downloaded the three .part files? Merge them yourself instead of using the .bat</b></summary>
 
 If you grabbed `LoGos-7B-Q4_K_M.gguf.part01 / .part02 / .part03` from the Releases page,
 join them into a single `LoGos-7B-Q4_K_M.gguf` (same folder). Either way works:

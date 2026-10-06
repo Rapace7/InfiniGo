@@ -182,8 +182,11 @@ RapaceGo/
 
 > 网络中断了不用怕 —— **重新双击那个文件会接着上次的地方继续下**。
 
+> **已经自己下载了 `LoGos-7B-Q4_K_M.gguf.part01 / .part02 / .part03` 那三个分卷？**
+> 那就不用管上面的 bat 了 —— 往下看 **▶ 点这里展开** 那段，一行命令就能合并。
+
 <details>
-<summary><b>已经自己下好那三个分卷了？也可以手动合并（不用 bat）</b></summary>
+<summary><b>▶ 点这里展开：已经自己下好那三个分卷了？也可以手动合并（不用 bat）</b></summary>
 
 从 Releases 页面直接下 `LoGos-7B-Q4_K_M.gguf.part01 / .part02 / .part03` 的话，
 **任选下面一种方式合并成 `LoGos-7B-Q4_K_M.gguf`** 即可（放在同一个文件夹里）。
