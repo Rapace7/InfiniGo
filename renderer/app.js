@@ -552,6 +552,7 @@ function tryPlay(x, y, byAI) {
     ? { x: capAt.x, y: capAt.y } : null;
 
   state.moves.push({ x, y, color: state.toMove, captured });
+  clearCoachAt(state.moves.length);      // 这个手号上的旧讲解作废（悔棋换了别的棋，见函数注释）
   clockSwitch();                         // 结算本手用时，换对方
   state.toMove = state.toMove === 'b' ? 'w' : 'b';
   state.pv = null;                       // 变化图只对当前局面有效，落了子就收掉
@@ -1047,6 +1048,7 @@ $('btn-undo').onclick = () => {
 $('btn-pass').onclick = () => {
   if (state.viewAt !== state.moves.length) { flash('回看中不能落子，先跳到最新'); return; }
   state.moves.push({ pass: true, color: state.toMove });
+  clearCoachAt(state.moves.length);      // 该手号上的旧讲解作废
   state.toMove = state.toMove === 'b' ? 'w' : 'b';
   state.koPoint = null;          // 脱先一手，劫自然消解
   state.viewAt = state.moves.length;
@@ -2541,6 +2543,20 @@ function truncateAnalysisTo(len) {
      在这里刷等于每悔棋一次多两次全量重绘。 */
 }
 
+/* ★★ 落子 / 停一手后，把「该手号」上留着的旧讲解清掉（2026-10-06 审查发现）。
+   为什么必须清：讲解是**按手号**存的（`state.coach.explain[at]`，at = 第几手），
+   而悔棋不会动这些数据 —— 于是「悔棋 → 换一手重下」之后，
+   新落的第 k 手会去查 `explain[k]`，拿到的是**上一手（旧那手）的讲解**：
+     · 框里写着旧手的坐标和理由，盘上却是另一手；
+     · 做「全盘讲解」时它被当成「已讲过」跳过（`if (!state.coach.explain[at])`）；
+     · `saveCoachFile` 会把这份错内容写进 `<棋谱名>.coach.json` —— **之后永远不再重讲**。
+   手号是唯一的失效依据（我们没存局面指纹），所以在**写入的同一处**把它清掉最稳：
+   `tryPlay` / 停一手 / AI 停一手 三个落子点都调它。 */
+function clearCoachAt(at) {
+  const ex = state.coach && state.coach.explain;
+  if (ex && at && ex[at]) delete ex[at];
+}
+
 /* ★ 单飞（同一时刻只允许一次分析在飞）—— 2026-10-04 实测定位出的 bug：
    原来每次落子都发一个分析请求，而 main.js 里**每个新请求都会 `terminateId` 掐掉前一个**
    （见 main.js 的 analyze()）。落子快过分析时，引擎陷进「启停风暴」：
@@ -3026,7 +3042,18 @@ async function maybeAIMove() {
     /* ★ 换了局（新对局 / 打开棋谱）→ 这手整体作废。
        光看手数不够：两边都是空盘时 `state.moves.length` 都是 0，下面的检查会"恰好通过"，
        于是 AI 把**上一局**算出的那一手落到了新盘上（重开一局时能实际看到）。 */
-    if (gen !== gameGen) return;
+    if (gen !== gameGen) {
+      /* ★★ 但作废之后**必须给新局重排一次**（2026-10-06 审查发现）。
+         原来这里直接 return，`retry` 仍是 false，finally 里那句
+         `if (retry && needAIMove())` 就不会排 —— 而新局启动时的 syncUI()
+         也会因为此刻 `aiBusy` 还是 true 而跳过（needAIMove 要求 !aiBusy）。
+         结果：新局若轮到 AI 走，**AI 不动、用户也动不了**（不是他的回合），
+         界面看着像卡死，要等下一次任意 UI 刷新（引擎状态变化、提示条到点）才自己好。
+         ★ 不计入 aiRetry —— 这不是"失败"，只是局面换了，不该占用重试额度。
+         ★ 用 0 延迟：这个定时器会排在本次 finally 之后跑，那时 aiBusy 已经放开了。 */
+      scheduleAIMove(0);
+      return;
+    }
     /* 期间局面被改动了（悔棋 / 回看 / 切模式后手动落子）→ 这手作废 */
     if (state.moves.length !== expectLen || state.viewAt !== state.moves.length) { retry = true; return; }
     if (!res || res.error) {
@@ -3042,6 +3069,7 @@ async function maybeAIMove() {
     if (pick === 'pass') {
       aiRetry = 0;
       state.moves.push({ pass: true, color: sideToMove(state.moves.length) });
+      clearCoachAt(state.moves.length);    // 该手号上的旧讲解作废
       state.viewAt = state.moves.length;
       syncUI();
     } else if (pick) {
@@ -3252,7 +3280,14 @@ if (window.api) {
     /* ★ 换局 / 换棋谱之后，旧请求的中间报告一律不要（anaReqGen 还停在上一代）——
        否则它们会往刚清空的界面上写数据。 */
     if (anaReqGen !== gameGen) return;
-    if (p && typeof p.turn === 'number' && p.turn !== state.viewAt) return;
+    /* ★★ 只认分析引擎的报告（2026-10-06 审查发现）。
+       对弈引擎（AI 思考时）用的也是同一个通道，但它是人类棋风权重 + 你选的段位档，
+       数字和分析引擎不一样；而它那次请求的手数恰好等于当前手数，
+       下面那条「手数过滤」拦不住它 —— 结果 AI 每走一步胜率条就闪一下、
+       还会污染走势曲线和 state.lastEval。主进程现在也会带 `engine` 且只推分析引擎的，
+       这里再挡一道（两边都拦，任一侧改动都不会漏）。 */
+    if (!p || p.engine !== 'analyze') return;
+    if (typeof p.turn === 'number' && p.turn !== state.viewAt) return;
     applyAnalysis(p, state.viewAt);
     draw();
   });
@@ -3667,8 +3702,14 @@ function stoneAlphaAt(x, y, stone) {
   const o = state.ownership;
   if (!o || o.length !== N * N) return 1;
   const v = o[y * N + x];
-  const owner = v > 0 ? 1 : -1;              // 1 = 黑
-  if (stone === owner) return TERR_STONE_MIN + (1 - TERR_STONE_MIN) * Math.abs(v);
+  const owner = v > 0 ? 1 : -1;              // 1 = 黑占优 / -1 = 白占优
+  /* ★★ 2026-10-06 审查发现：传进来的 `stone` 是**棋盘数组的值**（1=黑、2=白），
+     而 owner 是 **±1** 的约定 —— 必须先把 stone 也换成 ±1 再比。
+     原来直接写 `stone === owner`：白棋是 2，永远不等于 -1，
+     于是**所有白子在形势雾里都被当成死子、一直画成半透明**（黑棋却正常）。
+     一直没人报，是因为它看起来像"雾的样式"。 */
+  const mine = stone === 1 ? 1 : (stone === 2 ? -1 : 0);
+  if (mine === owner) return TERR_STONE_MIN + (1 - TERR_STONE_MIN) * Math.abs(v);
   return TERR_STONE_MIN;
 }
 
@@ -4338,7 +4379,12 @@ function trimCoachTail(t) {
   let s = String(t || '');
   const m1 = s.search(/(我需要|现在轮到|可能的选择|接下来我|下面我|让我想想|让我思考|让我分析)/);
   if (m1 > 0) s = s.slice(0, m1);
-  const m2 = s.search(/(其次|再次|另外|第三|第二|另一种|另一个思路|或者考虑|也可以考虑)/);
+  /* ★ 只把**真的是分点**的词当分点（2026-10-06 审查发现）：
+     原来 `第二|第三` 是裸词，而围棋讲解里「第二线」「第三路」「第二个角」都是常用说法 ——
+     一出现就把后面整段砍掉，句子只剩半截（而且看起来像模型自己写坏了，很难发现是这里砍的）。
+     现在给这两个词加条件：后面**不能**接 线/路/手/个/种/局/盘/阶。
+     `其次/再次/另外/另一种` 几乎只能是分点，保持原样。 */
+  const m2 = s.search(/(其次|再次|另外|另一种|另一个思路|或者考虑|也可以考虑|第二(?!线|路|手|个|种|局|盘|阶)|第三(?!线|路|手|个|种|局|盘|阶))/);
   if (m2 > 8) s = s.slice(0, m2);
   s = s.trim();
   const last = Math.max(s.lastIndexOf('。'), s.lastIndexOf('！'), s.lastIndexOf('？'));

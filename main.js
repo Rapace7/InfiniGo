@@ -281,6 +281,12 @@ function launch(e) {
   e.loading = true;                // 界面上显示「加载中」（就绪前）
   e.proc = spawn(exe, args, { windowsHide: true });
   console.log('[engine:' + e.key + '] 启动 pid=' + e.proc.pid + ' 模型=' + path.basename(e.weight));
+  /* ★ 必须在这里主动推一次状态（2026-10-06 审查发现）——
+     不推的话，「加载中」这个状态**永远到不了界面**：下一次 setStatus 要等探针通过
+     （KataGo 约 10~20 秒、LoGos 更久）。用户点完「加载」看到的是：
+     灯一直是灰的「未加载」、菜单里还写着「加载」，去点数子/让 AI 落子还被提示
+     「还没加载」—— 明明正在加载。而 CSS 里那套 loading 动画（呼吸黄点）等于死代码。 */
+  setStatus();
 
   if (e.kind === 'katago') {
     /* KataGo 的 stdout 就是协议（一行一条 JSON）；stderr 只当日志收着 */
@@ -302,7 +308,13 @@ function launch(e) {
     e.proc = null; e.ready = false; e.loading = false; e.paused = false;
     for (const [, rec] of e.pending) {
       clearTimeout(rec.timer);
-      rec.resolve(rec.best || { error: '引擎已退出' });
+      /* ★ 不要把中途报告 rec.best 当结果回给前端（2026-10-06 审查发现）。
+         它是搜索到一半的快照（visits 很少、胜率还没收敛），而渲染端只挡
+         `res.cancelled` 与 `res.error` —— 半成品会被当成正式结果画到盘上
+         （胜率条瞬间跳到极端值、候选点错乱），**而且不报任何错**，
+         用户只会觉得「AI 算得不对」。cancel() 那条路径早就带了 cancelled 标记，
+         这里是漏的。复盘那种多回合请求本来就没有 rec.best，不受影响。 */
+      rec.resolve({ error: '引擎已退出', cancelled: true });
     }
     e.pending.clear();
     if (code !== 0 && code !== null) e.lastErr = '引擎意外退出（code ' + code + '）';
@@ -737,8 +749,17 @@ function onLine(e, line) {
     rec.resolve(payload);
   } else {
     rec.best = payload;
-    /* 只推「最新那次查询」的中途报告 —— 否则切局面时旧查询的残影会闪一下 */
-    if (e.lastId === msg.id) send('engine:progress', payload);
+    /* 只推「最新那次查询」的中途报告 —— 否则切局面时旧查询的残影会闪一下。
+       ★★ 而且要**只推分析引擎的**（2026-10-06 审查发现）：
+       对弈引擎（AI 思考）也会推同一种中途报告，而它用的是人类棋风权重 + 你选的段位档，
+       数字和分析引擎不一样。以前两种报告走同一个通道、payload 里又没引擎名，
+       渲染端只能按「手数是否等于当前手数」过滤 —— 而 AI 那一次请求的手数正好等于当前手数，
+       于是**AI 每走一步，胜率条都会闪成另一套值**，还会写进走势曲线、
+       并污染「AI 要不要认输」看的那个 state.lastEval。
+       现在：带上引擎名 + 非分析引擎直接不推（省掉这些无用的 IPC）。 */
+    if (e.lastId === msg.id && e.key === 'analyze') {
+      send('engine:progress', Object.assign({ engine: e.key }, payload));
+    }
   }
 }
 
