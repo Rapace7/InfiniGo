@@ -87,6 +87,9 @@ const state = {
      （存成 <棋谱名>.coach.json，见 main.js 的 coachPath）。
      新对局时清空：没有棋谱就没地方存。 */
   recName: '',
+  /* 棋谱自带的解说词（SGF 的 C[]，只取主分支）：下标 = 第几手（0 = 开局前）。
+     只在「打谱」（state.fromRecord）时有内容；新开局的棋谱没有解说词。 */
+  sgfComments: [],
   /* ★ 两条讲解的「存法」不一样（2026-10-05 用户定的）：
        · 分析讲解 explain[at] —— **跟手数走**：点评第 at 手，切到哪手就看哪手。
          之前只存最后一次，所以「讲完第 2 手点回第 1 手，框里还挂着第 2 手的内容」。
@@ -758,6 +761,7 @@ function syncUI() {
   /* AI 该下就先让 AI 下（两个查询会互相打断，所以二选一）；否则刷新显示分析 */
   renderCurve();
   renderMoveList();
+  renderCommentBox();    // 右下角「解说词」框跟着当前手数走（棋谱自带的那种）
   renderClocks();        // 名字（PLAYER / KATAGO / PLAYER1 / PLAYER2）随模式变
 
   /* ★ 人机对弈：AI 该下就让它下；**同时也发一次分析** ——
@@ -888,6 +892,13 @@ async function runScore(silent) {
 
   scoreBusy = true;
   const gen = gameGen;                       // ★ 这次数子属于哪一局
+  /* ★★ 把「数的是第几手」**在这一刻定下来**（2026-10-06 审查发现）。
+     请求用的是 `state.viewAt`、而结果里的 `at` 原来读的是 **await 之后**的 viewAt ——
+     如果用户在等引擎的那一两秒里翻看了别的局面（滑块 / 点手数列表），
+     结果就会被记到**错误的那一手**上；而且因为 `at === viewAt`，
+     「局面变过就收起结果条」那条清理也不会触发，于是错的结果一直挂着。
+     典型触发：点数子 → 等的时候顺手拖滑块 → 结果条上的结论其实属于另一手。 */
+  const at0 = state.viewAt;
   const btn = $('btn-score');
   const oldTxt = btn.textContent;
   btn.disabled = true;
@@ -898,7 +909,7 @@ async function runScore(silent) {
        实测踩过：空盘 + 两个 pass 引擎给 -0.9，而理论终局值是 -7.5 ——
        因为它看到还有 81 个空点可下，认为这局还没结束。 */
     window.api.cancel();                       // 终局查询优先，掐掉正在跑的分析
-    const ms = state.moves.slice(0, state.viewAt)
+    const ms = state.moves.slice(0, at0)      // ★ 用定下来的 at0，不用当前的 viewAt
       .map(m => [m.color === 'b' ? 'B' : 'W', m.pass ? 'pass' : toGTP(m.x, m.y)]);
     /* ★ 必须让引擎看到「**连续两个** pass」，它才会走终局结算。只补一手是不够的 ——
        那样最后两手是「一手棋 + 一个 pass」：既不算终局，**又等于那一方白白放弃一手**，
@@ -945,8 +956,10 @@ async function runScore(silent) {
       by: 'score',
       terminal: isTerminal(),
       /* ★ 记下「是在第几手时数的」：手动数子（局面非终局）时局面没变，结果应当留着；
-         一旦落子/悔棋导致 viewAt 变化就自动收起（见 syncUI 里那句清理）。 */
-      at: state.viewAt,
+         一旦落子/悔棋导致 viewAt 变化就自动收起（见 syncUI 里那句清理）。
+         ⚠️ 用**发起时**定下来的 at0，不用当前的 viewAt —— 等引擎的那一两秒里
+         用户可能拖了滑块，那样结果会被记到错误的手上（2026-10-06 审查发现）。 */
+      at: at0,
     };
     syncUI();
   } finally {
@@ -986,6 +999,9 @@ function renderVerdict() {
   const box = $('verdict');
   const r = state.result;
   if (!r) { box.hidden = true; return; }
+  /* ★ 用户手动按过叉 → 尊重它，别再自己冒出来（2026-10-06 审查发现）。
+     新的一次数子 / 认输会整个替换 state.result，那时没有 dismissed 标记，照常显示。 */
+  if (r.dismissed) { box.hidden = true; return; }
 
   const sideTxt = r.winner === 'b' ? '黑方' : '白方';
   let main, sub = [];
@@ -1017,11 +1033,23 @@ $('btn-resign').onclick = () => {
   flash('已认输 · ' + (state.myColor === 'b' ? '白' : '黑') + '方胜');
   syncUI();
 };
-$('verdict-close').onclick = () => { $('verdict').hidden = true; };
+$('verdict-close').onclick = () => {
+  /* ★ 记下「用户手动关掉了」（2026-10-06 审查发现）：原来只把 box.hidden 设成 true，
+     而下一次 syncUI → renderVerdict 又会 `box.hidden = false` 把它显示回来 ——
+     表现为「点了叉，过一会儿结果条自己又冒出来」。
+     记在 state.result 上（新的一次数子/认输会整个替换掉它，所以下次有结果照样会显示）。 */
+  if (state.result) state.result.dismissed = true;
+  $('verdict').hidden = true;
+};
 
 $('btn-draft').onclick = toggleDraft;
 
 $('btn-undo').onclick = () => {
+  /* ★ 正在回看历史手时不许悔棋（2026-10-06 审查发现）。
+     落子 / 停一手 / 试下都有这条约定（「回看中不能落子，先跳到最新」），**只有悔棋漏了** ——
+     于是「看着第 50 手点悔棋」撤掉的是**最后一手**、画面还跳到 99 手，
+     用户会以为软件撤错了手（他心里的"这一手"就是眼前看着的那一手）。 */
+  if (state.viewAt !== state.moves.length) { flash('回看中不能悔棋，先跳到最新'); return; }
   if (!state.moves.length) return;
   /* 试下时不能退过存档点 —— 那等于把草稿起点也吃掉，退出试下后就亏了 */
   const floor = state.draft ? state.draft.from : 0;
@@ -1175,25 +1203,31 @@ function buildSGF() {
 function parseSGF(text) {
   const s = String(text || '');
 
-  /* ---------- 1) 切成 token：括号 / 节点属性 ----------
+  /* ---------- 1) 切成 token：括号 / 节点 ----------
      ★ 一个节点里可以有多组「标识 + 若干值」，例如 `;AB[pd]AW[dd]C[注释]`
        —— 所以不能只挑 `;[BW][..]`，得把每组标识+值都正经读出来。
-     ★ 属性值里的 `\]` 是 SGF 的转义，要当普通字符，否则值里带方括号就把 token 切歪。 */
+     ★ 属性值里的 `\]` 是 SGF 的转义，要当普通字符，否则值里带方括号就把 token 切歪。
+     ★ 2026-10-06：改成**按节点分组**（`{ props, at, end }`）并记下每个节点在**原文里的位置** ——
+       props 分组是为了正确取出「这一手的 C[] 解说词」（同一节点里 C 写在 B 前还是后都不影响）；
+       at/end 是为了以后「在软件里改解说词 → 只替换原棋谱里那一个 C[]」时能精确落刀。 */
   const toks = [];
   let i = 0;
   while (i < s.length) {
     const c = s[i];
     if (c === '(' || c === ')') { toks.push(c); i++; continue; }
     if (c !== ';') { i++; continue; }
+    const at = i;                                      // 节点起点（';' 的位置）
     i++;
+    const props = [];
     for (;;) {
       while (i < s.length && /\s/.test(s[i])) i++;       // 标识前的空白
       let id = '';
       while (i < s.length && /[A-Za-z]/.test(s[i])) { id += s[i]; i++; }
       if (!id) break;                                    // 这个节点读完了
-      const vals = [];
+      const vals = [], valAt = [];
       while (i < s.length && s[i] === '[') {
         i++;
+        valAt.push(i);                                   // 值正文起点（'[' 之后）
         let v = '';
         while (i < s.length) {
           if (s[i] === '\\') { v += s[i] + (s[i + 1] === undefined ? '' : s[i + 1]); i += 2; continue; }
@@ -1203,8 +1237,9 @@ function parseSGF(text) {
         vals.push(v);
         i++;                                             // 越过 ']'
       }
-      toks.push({ id: id.toUpperCase(), vals });
+      props.push({ id: id.toUpperCase(), vals, valAt });
     }
+    toks.push({ props, at, end: i });
   }
 
   /* ---------- 2) 走主分支 ----------
@@ -1246,33 +1281,56 @@ function parseSGF(text) {
   const head = toks.indexOf('(');
   if (head >= 0) walk(head);                             // 只解析第一棵树（一个文件可能串着好几局）
 
+  /* ---------- 3) 取出棋谱自带的东西 ----------
+     C[] = 这个节点上的**解说词**（很多棋谱有，实测抽查 600 份里 353 份带 —— 见开发记录）。
+     归属：带 B/W 的节点 → 属于**这一手**；根节点 → 属于「开局前」（下标 0）。
+     ★ 必须按**节点**扫（同一节点里 C 写在 B 前或后都不能错位），所以第 1 步分了组。 */
   const firstProp = id => {
-    for (const t of nodes) if (t.id === id && t.vals.length) return t.vals[0];
+    for (const nd of nodes) {
+      for (const p of nd.props) if (p.id === id && p.vals.length) return p.vals[0];
+    }
     return null;
   };
   const allPts = id => {
     const out = [];
-    for (const t of nodes) {
-      if (t.id !== id) continue;
-      for (const v of t.vals) {
-        if (v.length === 2) out.push({ x: v.charCodeAt(0) - 97, y: v.charCodeAt(1) - 97 });
+    for (const nd of nodes) {
+      for (const p of nd.props) {
+        if (p.id !== id) continue;
+        for (const v of p.vals) {
+          if (v.length === 2) out.push({ x: v.charCodeAt(0) - 97, y: v.charCodeAt(1) - 97 });
+        }
       }
     }
     return out;
   };
+  /* SGF 值里的转义：`\]` → `]`、`\\` → `\`（换行是原文里的换行，保留） */
+  const unsgf = v => String(v).replace(/\\([\s\S])/g, '$1');
 
-  const moves = [];
-  for (const t of nodes) {
-    if (t.id !== 'B' && t.id !== 'W') continue;
-    const color = t.id === 'B' ? 'b' : 'w';
-    const v = t.vals.length ? t.vals[0] : '';
-    if (!v) { moves.push({ color, pass: true }); continue; }      // [] = 停一手
-    if (v.length !== 2) continue;
-    /* ★ 这里用 charCode-97 而不是查表 —— SGF 是 a=1…h=8,**i=9**,j=10…s=19，
-       与界面/GTP 那套「跳过 I」的字母表**不同**（见文件顶部 SGF_COLS 的注释）。 */
-    moves.push({ color, x: v.charCodeAt(0) - 97, y: v.charCodeAt(1) - 97 });
+  const moves = [], comments = [], mainLine = [];
+  for (const nd of nodes) {
+    /* 先看这个节点是不是一手棋（一次扫全部 props，所以 C 的位置无关） */
+    let movesHere = [];
+    for (const p of nd.props) {
+      if (p.id !== 'B' && p.id !== 'W') continue;
+      const color = p.id === 'B' ? 'b' : 'w';
+      const v = p.vals.length ? p.vals[0] : '';
+      if (!v) { movesHere.push({ color, pass: true }); continue; }   // [] = 停一手
+      if (v.length !== 2) continue;
+      /* ★ 这里用 charCode-97 而不是查表 —— SGF 是 a=1…h=8,**i=9**,j=10…s=19，
+         与界面/GTP 那套「跳过 I」的字母表**不同**（见文件顶部 SGF_COLS 的注释）。 */
+      movesHere.push({ color, x: v.charCodeAt(0) - 97, y: v.charCodeAt(1) - 97 });
+    }
+    moves.push(...movesHere);
+    /* 再收这个节点上的解说词，并记下它在**原文里的位置**（编辑时要用它精确落刀） */
+    let cSpan = null;
+    for (const p of nd.props) {
+      if (p.id !== 'C' || !p.vals.length) continue;
+      if (p.valAt && p.valAt.length) cSpan = [p.valAt[0], p.valAt[0] + p.vals[0].length];
+      const txt = unsgf(p.vals[0]);
+      if (txt.trim()) comments[movesHere.length ? moves.length : 0] = txt;
+    }
+    mainLine.push({ at: nd.at, end: nd.end, moveIdx: movesHere.length ? moves.length : 0, cSpan });
   }
-
   const size = parseInt(firstProp('SZ') || '19', 10) || 19;
   const kmRaw = firstProp('KM');
   const komi = kmRaw === null ? null : parseFloat(kmRaw);
@@ -1286,7 +1344,32 @@ function parseSGF(text) {
   }
   /* 双方名字（别的软件导出的棋谱大多有；没有就是 null） */
   const pb = firstProp('PB'), pw = firstProp('PW');
-  return { ok: moves.length > 0 || ab.length > 0, size, komi, rules, ab, aw, moves, pb, pw };
+  return { ok: moves.length > 0 || ab.length > 0, size, komi, rules, ab, aw, moves, pb, pw, comments, mainLine };
+}
+
+/* ---- 把「第 at 手」的解说词写回 SGF 文本（2026-10-06 新增） ----
+   做法：**只在原文里替换/插入那一个节点上的 C[]**，其余字符一个都不动。
+   为什么必须这么做（而不是用 buildSGF 重新生成一份）：
+   我们的导出只写主分支、不认识变体/别的属性 —— 拿它覆盖用户下载来的棋谱，
+   会把变体、引擎信息、别的注释**全部抹掉**。所以这里把文件当"文本"处理，
+   靠 parseSGF 交出来的节点位置精确落刀。
+   返回 { ok, text } 或 { error }。 */
+function patchSGFComment(text, at, newText) {
+  const p = parseSGF(text);
+  const ent = (p.mainLine || []).find(x => x.moveIdx === at);
+  if (!ent) return { error: '这份棋谱里找不到第 ' + at + ' 手' };
+  const esc = String(newText || '').replace(/\\/g, '\\\\').replace(/\]/g, '\\]');
+  if (ent.cSpan) {
+    if (!newText) {
+      /* 清空 → 把整个 C[..] 删掉（'C[' 在值的左两格：标识 1 字符 + '['） */
+      const s = ent.cSpan[0] - 2, e = ent.cSpan[1] + 1;
+      return { ok: true, text: text.slice(0, s) + text.slice(e) };
+    }
+    return { ok: true, text: text.slice(0, ent.cSpan[0]) + esc + text.slice(ent.cSpan[1]) };
+  }
+  if (!newText) return { ok: true, text };          // 本来没有、又要清空 → 什么都不用做
+  /* 没有 C[] → 插在这个节点最后一个属性的后面 */
+  return { ok: true, text: text.slice(0, ent.end) + 'C[' + esc + ']' + text.slice(ent.end) };
 }
 
 /* 把解析出来的棋谱装进当前局面。
@@ -1308,6 +1391,9 @@ function applyRecord(rec, srcName) {
     ...rec.aw.map(p => ({ x: p.x, y: p.y, color: 'w' })),
   ];
   state.moves = rec.moves.slice();
+  /* ★ 棋谱自带的解说词（SGF 的 C[]，主分支逐手）—— 右下角那个「解说词」框就是显示它。
+     没有就是空数组（多数自己导出的棋谱没有）。 */
+  state.sgfComments = Array.isArray(rec.comments) ? rec.comments.slice() : [];
   /* 棋谱里带的双方名字 → 右侧 ID 栏（没有就留空，回落到默认叫法） */
   const cleanName = v => String(v || '').replace(/[\[\]\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 24);
   state.names = { b: cleanName(rec.pb), w: cleanName(rec.pw) };
@@ -2391,6 +2477,7 @@ $('m-start').onclick = () => {
 function applyNewGame(idle) {
   N = settings.size;
   state.fromRecord = false;     // 新开的局不是打谱
+  state.sgfComments = [];       // 新开局没有「棋谱自带的解说词」
   state.recName = '';           // ★ 也不是某份棋谱了 —— 讲解没有存放处（全盘讲解按钮会收起）
   clearCoachPanels();           // 讲解只在对局期间保留（用户要求：开新局就清）
   const R = RULES[settings.rules] || RULES.chinese;
@@ -4017,7 +4104,96 @@ function renderMoveList() {
   }
 }
 
-/* ---------------- 键盘快捷键 ---------------- */
+/* ---------------- 解说词框（棋谱自带的 C[]，2026-10-06 用户要求） ----------------
+   参照 MultiGo 的那个框：显示**当前看着的这一手**在棋谱文件里写的解说。
+   数据来自 parseSGF 交出来的 comments（**只取主分支** —— 我们不做分支树，用户定的）。
+   编辑：直接改棋谱文件里那一个 C[]（见 patchSGFComment），第一次覆盖前会留 .bak。 */
+
+function renderCommentBox() {
+  const box = $('cbox');
+  if (!box) return;
+  /* 正在编辑时**不要**覆盖用户的输入 —— syncUI 会频繁调用本函数 */
+  if (box.querySelector('textarea')) return;
+
+  const at = state.viewAt;
+  const list = state.sgfComments || [];
+  const canEdit = !!state.fromRecord && !!state.recName;
+  const btn = $('cbox-edit');
+  btn.disabled = !canEdit;
+  btn.title = canEdit
+    ? '改这一手的解说词（存回这份棋谱文件；第一次改会先留一份 .bak 备份）'
+    : '只有「打开棋谱」时才能改解说词';
+  $('cbox-at').textContent = state.noGame ? '（棋谱自带）'
+    : (at === 0 ? '（开局前）' : '（第 ' + at + ' 手）');
+
+  const txt = list[at] || '';
+  if (txt) { box.textContent = txt; return; }
+  const ph = document.createElement('div');
+  ph.className = 'ph';
+  ph.textContent = state.noGame
+    ? '打开一份棋谱后，这里显示棋谱里自带的解说词。'
+    : (canEdit ? '这一手没有解说词 —— 点「编辑」可以补上。' : '这一手没有解说词。');
+  box.replaceChildren(ph);
+}
+
+/* 点「编辑」→ 就地变成输入框（保存/取消） */
+function editComment() {
+  const box = $('cbox');
+  const at = state.viewAt;
+  if (box.querySelector('textarea')) return;
+  if (!state.fromRecord || !state.recName) { flash('只有打开棋谱时才能改解说词'); return; }
+
+  const ta = document.createElement('textarea');
+  ta.value = (state.sgfComments || [])[at] || '';
+  ta.placeholder = '写点这一手的解说…（留空 + 保存 = 删掉这一手的解说词）';
+  const bar = document.createElement('div');
+  bar.style.cssText = 'display:flex;gap:6px;margin-top:6px;flex:none';
+  const ok = document.createElement('button');
+  ok.textContent = '保存'; ok.className = 'primary'; ok.style.height = '24px';
+  const no = document.createElement('button');
+  no.textContent = '取消'; no.style.height = '24px';
+  bar.append(ok, no);
+  box.replaceChildren(ta, bar);
+  ta.focus();
+
+  no.onclick = () => renderCommentBox();
+  ok.onclick = async () => {
+    ok.disabled = true;
+    const r = await saveComment(at, ta.value.trim());
+    if (r && r.error) { flash('保存失败：' + r.error); ok.disabled = false; return; }
+    flash('解说词已存回棋谱（第 ' + at + ' 手）' + ((r && r.note) ? r.note : ''));
+    renderCommentBox();
+  };
+}
+
+/* 把这一手的解说词写回棋谱文件 */
+async function saveComment(at, text) {
+  const rd = await window.api.records.read(state.recName);
+  if (!rd || rd.error) return { error: (rd && rd.error) || '读不到这份棋谱' };
+  const patched = patchSGFComment(rd.text, at, text);
+  if (patched.error) return { error: patched.error };
+  const w = await window.api.records.save(state.recName, patched.text);
+  if (w && w.error) return { error: w.error };
+  if (!state.sgfComments) state.sgfComments = [];
+  if (text) state.sgfComments[at] = text; else delete state.sgfComments[at];
+  /* ★ 如实回报两件用户该知道的事（2026-10-06）：
+       ① 文件原本是 GBK 还是 UTF-8 —— 我们按原编码写回的，不改用户文件的口径；
+       ② GBK 里没有的字（比如 emoji）会被写成 '?'，必须告诉用户，否则他
+          以为存进去了、换个软件打开发现少字却不知道是谁弄丢的。 */
+  let note = '';
+  if (w && w.enc === 'gbk') {
+    note = '（按原文件的 GBK 编码存回）';
+    if (w.missing && w.missing.length) {
+      note += ' · ★ 有 ' + w.missing.length + ' 个字符 GBK 装不下，已写成 ?：' +
+        [...new Set(w.missing)].slice(0, 6).join('');
+    }
+  }
+  return { ok: true, note };
+}
+
+$('cbox-edit').onclick = editComment;
+
+
 
 /* 用 e.code 判断，不用 e.key —— 中文输入法下字母键的 key 会变（本项目踩过同源的坑）。
    焦点在输入控件里时一律不拦截，免得选难度时按空格出意外。 */
@@ -4720,8 +4896,14 @@ async function runPickExplain() {
       if (!r.error && !coordOk(trimCoachTail(cleanCoachText(r.text)), pt)) {
         const r2 = await coachAsk(prompt, 320, typer);
         if (!r2) break;
+        /* ★ 复检必须用**没补前缀**的文本（2026-10-06 审查发现）：
+           `coachTextReady` 会在开头补上「如果白棋下在<pt>，」，而 coordOk 抓的是
+           前 18 字里第一个「字母+数字」—— 抓到的**永远是我们自己补的那个正确坐标**，
+           于是这次复检恒为真（等于没检查）：第二次哪怕讲错了点，也照样被采用。
+           第一次的复检用的是 cleanCoachText（没补头）所以是对的 —— 这里跟上它。 */
+        const clean2 = trimCoachTail(cleanCoachText(r2.text));
         const t2 = coachTextReady(r2.text, pt, side);
-        if (coordOk(t2, pt)) txt = t2;
+        if (coordOk(clean2, pt)) txt = t2;
       }
       const finalTxt = r.error
         ? ('（讲不出来：' + r.error + '）')

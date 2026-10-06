@@ -295,6 +295,23 @@ main { flex: 1; display: flex; min-height: 0; }
   display: flex; align-items: center; justify-content: space-between;
   gap: 6px; margin-bottom: 5px;
 }
+/* ---------- 解说词框（棋谱自带的 C[]，右下角） ----------
+   参照 MultiGo：显示当前这一手在棋谱里写的解说；只有打开棋谱时才有内容。
+   正文可选中复制（要读、要抄），和讲解框同样的道理（见下面 user-select 那条）。 */
+.combox {
+  flex: 1; min-height: 60px; overflow-y: auto;
+  font-size: 12.5px; line-height: 1.8; color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+  user-select: text; -webkit-user-select: text;
+}
+.combox .ph { color: var(--text-dim); }
+.combox textarea {
+  width: 100%; min-height: 96px; box-sizing: border-box;
+  font: inherit; font-size: 12.5px; line-height: 1.8;
+  padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px;
+  background: #fff; color: var(--text); resize: vertical;
+}
+.combox textarea:focus { outline: none; border-color: var(--accent); }
 .curve-head .card-title { margin-bottom: 0; }
 .seg.mini { gap: 3px; }
 .seg.mini button { height: 20px; padding: 0 7px; font-size: 11px; }

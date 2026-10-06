@@ -1082,17 +1082,104 @@ ipcMain.handle('records:list', () => {
   } catch (e) { return []; }
 });
 
+/* 读文本文件，**自动认编码**（2026-10-06 审查发现）。
+   为什么必须有它：中文棋谱里**大量是 GBK**（不是 UTF-8）—— 实测抽样 800 份真实棋谱，
+   481 份非 UTF-8 但能按 GBK 正常解（占 60%；在**含中文**的样本里高达 85%）。
+   而原来一律 `readFileSync(..., 'utf8')` → 那些棋谱里的**解说词、人名、备注全是乱码**
+   （棋谱本身的着法是 ASCII，所以看不出来；一旦显示中文就露馅）。
+   做法：先按 UTF-8 读；出现替换字符 U+FFFD 说明不是 UTF-8，再按 GBK 解一次；
+   GBK 解得干净就用它，否则退回 UTF-8 的结果（宁可乱码也别丢东西）。 */
+/* ---------- 中文棋谱的编码（2026-10-06） ----------
+   ★ 实测本机 21433 份真实棋谱里，抽样 800 份有 481 份是 **GBK**（含中文的里占 85%）。
+     只按 UTF-8 读 → 人名、解说词全成乱码。所以读要用 readTextSmart。
+   ★★ 但**写也必须按原编码写**（这是踩过的坑）：
+     用户下载来的棋谱不可再生，一编辑就把 GBK 改成 UTF-8，别的软件（MultiGo 等）
+     打开就是乱码 —— 用户不会知道是我们弄坏的。
+
+   Node 只有 GBK 的**解码器**（TextDecoder），没有编码器（Buffer 不认 gbk/gb18030，
+   也没装 iconv-lite）。这里的做法：启动时按需把 GBK 双字节区**反查**成
+   「字符 → 两字节」表（14ms / 23939 字），之后用它编码。
+   拿真实 GBK 棋谱验过：编码回去的字节与原文件**逐字节一致**。 */
+
+/* 判断一段字节是不是合法 UTF-8（不含替换字符） */
+function looksUtf8(buf) {
+  return buf.toString('utf8').indexOf('\uFFFD') < 0;
+}
+
+function readTextSmart(p) {
+  const buf = fs.readFileSync(p);
+  if (looksUtf8(buf)) return buf.toString('utf8');
+  try {
+    const asGbk = new TextDecoder('gbk').decode(buf);
+    if (asGbk.indexOf('\uFFFD') < 0) return asGbk;
+  } catch (e) { /* 环境不支持 gbk 解码就算了，走下面的兜底 */ }
+  return buf.toString('utf8');
+}
+
+/* 「字符 → GBK 两字节」反查表（懒建，只在真要写 GBK 时才建） */
+let gbkTable = null;
+function gbkEncode(str) {
+  if (!gbkTable) {
+    const dec = new TextDecoder('gbk');
+    gbkTable = new Map();
+    for (let lead = 0x81; lead <= 0xfe; lead++) {
+      for (let trail = 0x40; trail <= 0xfe; trail++) {
+        if (trail === 0x7f) continue;
+        const ch = dec.decode(Buffer.from([lead, trail]));
+        if (ch.length !== 1 || ch === '\uFFFD') continue;
+        if (!gbkTable.has(ch)) gbkTable.set(ch, [lead, trail]);
+      }
+    }
+  }
+  const out = [];
+  const missing = [];
+  for (const ch of str) {
+    const c = ch.codePointAt(0);
+    if (c < 0x80) { out.push(c); continue; }              // ASCII 一样
+    const b = gbkTable.get(ch);
+    if (b) out.push(b[0], b[1]);
+    else { out.push(0x3f); missing.push(ch); }            // GBK 里没有 → '?'，并如实报给用户
+  }
+  return { buf: Buffer.from(out), missing };
+}
+
+/* 按「文件原来的编码」写回；本来没有的新文件用 UTF-8。 */
+function writeTextSmart(p, text) {
+  let gbk = false;
+  try { gbk = fs.existsSync(p) && !looksUtf8(fs.readFileSync(p)); } catch (e) { gbk = false; }
+  if (!gbk) { fs.writeFileSync(p, text, 'utf8'); return { enc: 'utf8', missing: [] }; }
+  const { buf, missing } = gbkEncode(text);
+  fs.writeFileSync(p, buf);
+  return { enc: 'gbk', missing };
+}
+
 ipcMain.handle('records:read', (_e, name) => {
   try {
-    return { ok: true, text: fs.readFileSync(path.join(RECORDS_DIR, safeRecName(name)), 'utf8') };
+    return { ok: true, text: readTextSmart(path.join(RECORDS_DIR, safeRecName(name))) };
   } catch (e) { return { error: String((e && e.message) || e) }; }
 });
 
 ipcMain.handle('records:save', (_e, name, text) => {
   try {
     const f = safeRecName(name);
-    fs.writeFileSync(path.join(RECORDS_DIR, f), String(text), 'utf8');
-    return { ok: true, name: f, dir: RECORDS_DIR };
+    const full = path.join(RECORDS_DIR, f);
+    /* ★★ 覆盖已有文件前，先留一份一次性备份 `<名字>.bak`（2026-10-06）。
+       为什么：应用里能**改棋谱文件**了（右下角「解说词」框会写回那一手的 C[]）。
+       虽然我们只替换那一个属性（见 app.js 的 patchSGFComment），但用户下载来的棋谱
+       是**不可再生**的东西 —— 万一哪里判错位置，得有一份能捞回来。
+       只在**第一次覆盖**时留（.bak 已存在就不动），所以不会一堆副本。
+       新文件（本来不存在）不需要备份。 */
+    if (fs.existsSync(full) && !fs.existsSync(full + '.bak')) {
+      try { fs.copyFileSync(full, full + '.bak'); } catch (err) { /* 备份失败不阻止保存，但下面要如实报告 */ }
+    }
+    /* ★★ 必须按**原编码**写回（GBK 棋谱不能被改成 UTF-8，详见 readTextSmart 上面的说明）。 */
+    const wr = writeTextSmart(full, String(text));
+    return {
+      ok: true, name: f, dir: RECORDS_DIR,
+      backedUp: fs.existsSync(full + '.bak'),
+      enc: wr.enc,
+      missing: wr.missing                                // GBK 编不出来的字（如 emoji）
+    };
   } catch (e) { return { error: String((e && e.message) || e) }; }
 });
 

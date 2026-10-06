@@ -163,6 +163,21 @@
       <canvas id="curve"></canvas>
     </div>
 
+    <!-- 棋谱自带的解说词（2026-10-06 用户要求，参照 MultiGo 的那个框）：
+         显示**当前看着的这一手**在棋谱文件里写的解说（SGF 的 C[]）。
+         ★ 只显示**主分支**的解说 —— 我们不做分支树（用户定：不显示变体）。
+         ★ 只有「打开棋谱」时才有内容，这时才能点「编辑」；新开的一局没有这东西。
+         放在右下角：走势图下面是特意留空的一块（见上面那条注释）。 -->
+    <div class="card col grow" id="cbox-card">
+      <div class="curve-head">
+        <span class="card-title">解说词 <i class="dim" id="cbox-at"></i></span>
+        <div class="seg mini" id="cbox-acts">
+          <button id="cbox-edit" title="改这一手的解说词（存回这份棋谱文件；第一次改会先留一份 .bak 备份）">编辑</button>
+        </div>
+      </div>
+      <div class="combox" id="cbox"></div>
+    </div>
+
   </aside>
 </main>
 
