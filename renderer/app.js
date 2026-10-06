@@ -547,8 +547,15 @@ function tryPlay(x, y, byAI) {
   // 提子后自己仍无气 → 自杀，非法
   if (group(b, x, y).libs.size === 0) return false;
 
-  // 简单劫：本手只提一子、且自己这块也只有一口气 → 对方不得立即回提
-  state.koPoint = (captured === 1 && group(b, x, y).libs.size === 1)
+  /* 简单劫（三条**同时**成立才算）：①本手只提 1 子 ②落下的这颗子是**孤子**（没连己方子）
+     ③自己这块只剩一口气。
+     ★★ 2026-10-06 审查发现：原来漏了 ② —— 于是**倒扑被误判成劫**。
+     倒扑时落子是连着自己人的，对方回提会一口气提走 ≥2 子（局面并不重复），
+     那是完全合法、而且常常是唯一的好手 —— 被禁掉等于规则出错。
+     （人工与 AI 落子都走这里，所以 AI 也会跟着下错。）
+     实测证据见 _cdp_ko.mjs：A 组（倒扑）修前 koPoint 被错误设上、白方回提被拒。 */
+  const gSelf = group(b, x, y);
+  state.koPoint = (captured === 1 && gSelf.stones.length === 1 && gSelf.libs.size === 1)
     ? { x: capAt.x, y: capAt.y } : null;
 
   state.moves.push({ x, y, color: state.toMove, captured });
@@ -2600,8 +2607,15 @@ async function runAnalysis() {
       /* ① 先算**当前看着的局面** —— 胜率条 / 候选点 / 形势雾要它上屏（最高优先）。 */
       const cur = state.viewAt;
       if (shownAt !== cur || anaForceCur) {
-        anaForceCur = false;
         const ok = await runAnalysisOnce(cur);
+        /* ★ 只在**成功**之后才清掉「强制重算」这个意图（2026-10-06 审查发现）。
+           原来是在发请求之前就清：这一趟要是出错（not ok → break），
+           意图就丢了 —— 而 `history[cur]` 多半已经有值，
+           `scheduleAnalysis` 的去重条件（`typeof history[at] !== 'number'`）也不会再排队，
+           于是棋盘上的胜率 / 形势雾**一直停在旧值**，要等下一次落子才更新。
+           典型触发：改「计算深度」、切「形势显示」、悔棋之后 —— 这三处都是靠它强制重算当前局面的。
+           留在 true 不会空转：每次重试都要等一次新的 schedule（不是死循环）。 */
+        if (ok) anaForceCur = false;
         if (!ok) break;                          // 引擎没就绪 / 出错 / 被取消：别死循环
         continue;
       }
