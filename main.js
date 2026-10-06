@@ -126,22 +126,51 @@ let PATHS = readConfig();
 
 function readConfig() {
   const d = defaultPaths();
+  /* ★ 2026-10-06 深夜加：**存在性检查 + 回退**。
+     原来的写法是 `pick(raw.katago) || d.katago` —— 只看"配置里填了没有"，
+     不看"那个文件还在不在"。后果：
+       · 用户把整个文件夹挪个位置 / 换台电脑 / 复制给别人 → 配置里还是旧盘的
+         绝对路径，软件照着找一个**不存在的文件**，引擎永远起不来；
+       · 而默认值（相对软件目录的上一级）本来是对的，只是轮不到它。
+     现在：配置里那条路径**文件不存在**就忽略它、退回默认。
+     设置面板里手选的一定存在，所以正常使用完全不受影响；
+     只有"从别人那儿拷来的 settings.json"这种场景会受益。
+     ★ 为什么非加不可：做"懒人包"时必须让「解压到哪都能用」成立 ——
+       别人要是把文件夹解压成嵌套目录（Windows 常见），
+       相对路径就会指错一层，有这道回退还能自己找回来。
+     注意：记录一个布尔值 `fellBack`，启动时可以提示用户"路径已重置"，
+     免得他以为设置丢了。 */
+  let fellBack = false;
   try {
     const raw = JSON.parse(fs.readFileSync(CFG_FILE, 'utf8'));
     const pick = v => (typeof v === 'string' && v.trim()) ? v.trim() : null;
+    /* 候选路径：配置里有、且**文件真的存在**才用；否则用默认 */
+    const usable = (v, def, why) => {
+      const s = pick(v);
+      if (!s) return def;
+      try { if (fs.existsSync(s)) return s; } catch (e) { /* 路径非法也当不存在 */ }
+      if (why) fellBack = true;
+      return def;
+    };
     return {
-      katago:        pick(raw.katago)        || d.katago,
-      analyzeWeight: pick(raw.analyzeWeight) || d.analyzeWeight,
-      playWeight:    pick(raw.playWeight)    || d.playWeight,
-      coachServer:   pick(raw.coachServer)   || d.coachServer,
-      coachWeight:   pick(raw.coachWeight)   || d.coachWeight,
+      katago:        usable(raw.katago,        d.katago,        true),
+      analyzeWeight: usable(raw.analyzeWeight, d.analyzeWeight, true),
+      playWeight:    usable(raw.playWeight,    d.playWeight,    true),
+      coachServer:   usable(raw.coachServer,   d.coachServer,   true),
+      coachWeight:   usable(raw.coachWeight,   d.coachWeight,   true),
       recordsDir:    typeof raw.recordsDir === 'string' ? raw.recordsDir.trim() : '',
       recent:        normRecent(raw.recent),
+      /* ★ fellBack 目前**没有界面消费**（留着当预留字段）——
+         原本想"回退时给用户提个醒"，但实测那个场景（拷来的整包、挪过位置）
+         用户本来就知道自己干了什么，多一句提示反而吵。
+         所以这里只如实回报，不弹任何东西；将来要提示直接读它就行。 */
+      fellBack:      fellBack,
     };
   } catch (e) {
     return Object.assign(d, {
       recordsDir: '',
       recent: { analyzeWeight: [], playWeight: [], coachWeight: [] },
+      fellBack: false,
     });
   }
 }
