@@ -182,6 +182,47 @@ RapaceGo/
 
 > 网络中断了不用怕 —— **重新双击那个文件会接着上次的地方继续下**。
 
+<details>
+<summary><b>已经自己下好那三个分卷了？也可以手动合并（不用 bat）</b></summary>
+
+从 Releases 页面直接下 `LoGos-7B-Q4_K_M.gguf.part01 / .part02 / .part03` 的话，
+**任选下面一种方式合并成 `LoGos-7B-Q4_K_M.gguf`** 即可（放在同一个文件夹里）。
+
+**① 命令行一行（最省事）** —— 把三行连起来敲：
+
+```bat
+copy /b LoGos-7B-Q4_K_M.gguf.part01+LoGos-7B-Q4_K_M.gguf.part02+LoGos-7B-Q4_K_M.gguf.part03 LoGos-7B-Q4_K_M.gguf
+```
+
+**② PowerShell（逐块流式拷贝，内存占用低）**
+
+```powershell
+$out = [System.IO.File]::Create("LoGos-7B-Q4_K_M.gguf")
+foreach ($p in "part01","part02","part03") {
+  $i = [System.IO.File]::OpenRead("LoGos-7B-Q4_K_M.gguf.$p")
+  $i.CopyTo($out); $i.Close()
+}
+$out.Close()
+```
+
+**③ 用 7-Zip / WinRAR 之类** —— 这些工具没有"合并分卷"功能，**不行**。
+
+**⚠️ 合并完必须核对**：文件应该是 **4,466,xxx,xxx 字节（约 4.36 GB）**。
+对不上就是下载不全，把三个 `.part` 删掉重下。核对：
+
+```bat
+dir LoGos-7B-Q4_K_M.gguf
+```
+
+合并成功后可以删掉那三个 `.part`（省 4.4GB 空间）。
+然后回软件「设置」→ LoGos 组选 `llama-server.exe` 和合并出来的 `.gguf` 即可。
+
+> 顺便说明：GitHub 单个文件硬上限 2GB，所以 4.4GB 的模型只能分卷上传 ——
+> 这是**平台限制**，不是故意的。分卷合并就是纯二进制拼接，
+> 和 `split` / `cat` 生成的结果完全一致（开发时用 sha256 校验过）。
+
+</details>
+
 ### 第 4 步 · 加载引擎，开始用
 
 ⚠️ 软件**打开时故意一个引擎都不加载**（不占你的显存、也不拖慢启动）。

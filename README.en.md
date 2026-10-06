@@ -116,6 +116,42 @@ RapaceGo/
    └─ LoGos-7B-Q4_K_M.gguf
 ```
 
+<details>
+<summary><b>Already downloaded the three .part files? Merge them yourself instead of using the .bat</b></summary>
+
+If you grabbed `LoGos-7B-Q4_K_M.gguf.part01 / .part02 / .part03` from the Releases page,
+join them into a single `LoGos-7B-Q4_K_M.gguf` (same folder). Either way works:
+
+**① One line in the command prompt**
+
+```bat
+copy /b LoGos-7B-Q4_K_M.gguf.part01+LoGos-7B-Q4_K_M.gguf.part02+LoGos-7B-Q4_K_M.gguf.part03 LoGos-7B-Q4_K_M.gguf
+```
+
+**② PowerShell (streamed, low memory use)**
+
+```powershell
+$out = [System.IO.File]::Create("LoGos-7B-Q4_K_M.gguf")
+foreach ($p in "part01","part02","part03") {
+  $i = [System.IO.File]::OpenRead("LoGos-7B-Q4_K_M.gguf.$p")
+  $i.CopyTo($out); $i.Close()
+}
+$out.Close()
+```
+
+**③ 7-Zip / WinRAR — no.** Archive tools have no "join split files" function.
+
+**⚠️ Always check the result**: it should be **4,466,xxx,xxx bytes (about 4.36 GB)**.
+If it's smaller, a part did not finish downloading — delete them and download again.
+Then delete the three `.part` files to reclaim 4.4 GB, and point the app's Settings at
+`llama-server.exe` and the merged `.gguf`.
+
+> Why split files at all? GitHub refuses any single file over 2 GB, and this model is
+> 4.4 GB. The parts are plain binary chunks — joining them reproduces the original file
+> byte for byte (verified with sha256 during development).
+
+</details>
+
 **Just want to play, no commentary?** Prepare only the KataGo files — the commentary
 features simply stay unused. Anywhere else works too: set it in the app's Settings, or
 via the `RAPACEGO_KATAGO` / `RAPACEGO_LOGOS` environment variables.
