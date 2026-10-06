@@ -35,7 +35,7 @@ if [ -z "$MSG" ]; then
 fi
 
 cd "$(dirname "$0")"
-N="C:/Users/rapac/.workbuddy/binaries/node/versions/22.22.2-3/node.exe"
+N="C:/Users/rapac/.workbuddy/binaries/node/versions/22.22.2-6/node.exe"
 GH="/c/Program Files/GitHub CLI/gh.exe"
 export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/

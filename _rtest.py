@@ -4,15 +4,14 @@
 用法：python _rtest.py [测试脚本] [截图名] [第二段脚本] [第二张截图名]
 全程只管理自己启动的 electron 进程，绝不碰用户已开着的实例。
 """
-import subprocess, time, os, ctypes, sys
+import subprocess, time, os, ctypes, sys, struct, zlib
 from ctypes import wintypes
-from PIL import Image
 
 # ★ 项目目录**从本文件位置推导**，不写死盘符 ——
 #   否则把文件夹改名（GoMate → RapaceGo）后整套测试脚本就全废了。
 APP = os.path.dirname(os.path.abspath(__file__))
 EXE = os.path.join(APP, 'node_modules', 'electron', 'dist', 'electron.exe')
-NODE = r'C:\Users\rapac\.workbuddy\binaries\node\versions\22.22.2-3\node.exe'
+NODE = r'C:\Users\rapac\.workbuddy\binaries\node\versions\22.22.2-6\node.exe'
 G = APP + os.sep
 S1 = sys.argv[1] if len(sys.argv) > 1 else G + "_cdp_test.mjs"
 P1 = sys.argv[2] if len(sys.argv) > 2 else G + '_rule.png'
@@ -31,6 +30,33 @@ class BIH(ctypes.Structure):
                 ("biClrImportant", ctypes.c_uint32)]
 
 
+def bgra_to_png(w, h, buf):
+    """把 BGRA 像素手工编码成 PNG（纯标准库，不依赖 PIL）。
+
+    ★ 为什么不用 Pillow：2026-10-06 换了 Python 环境后 PIL 已经不在了，
+      而截图只是**验收用的副产物** —— 为了它引一个二进制依赖不划算。
+      这里的 PNG 编码就是 zlib + CRC32，几十行，标准库自带。"""
+    raw = bytearray()
+    stride = w * 4
+    for y in range(h):
+        raw.append(0)                                   # 每行的 filter 类型：0 = None
+        row = buf[y * stride:(y + 1) * stride]
+        # BGRA -> RGB，并做上下翻转（位图原点在左下，PNG 在左上）
+        for x in range(w):
+            b_, g_, r_, a_ = row[x * 4:x * 4 + 4]
+            raw += bytes((r_, g_, b_))
+
+    def chunk(tag, data):
+        c = struct.pack('>I', len(data)) + tag + data
+        return c + struct.pack('>I', zlib.crc32(tag + data) & 0xffffffff)
+
+    ihdr = struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)   # 8bit truecolor RGB
+    return (b'\x89PNG\r\n\x1a\n'
+            + chunk(b'IHDR', ihdr)
+            + chunk(b'IDAT', zlib.compress(bytes(raw), 6))
+            + chunk(b'IEND', b''))
+
+
 def capture(hwnd, out):
     r = wintypes.RECT(); user32.GetWindowRect(hwnd, ctypes.byref(r))
     w, h = r.right - r.left, r.bottom - r.top
@@ -41,7 +67,8 @@ def capture(hwnd, out):
     bmi.biPlanes = 1; bmi.biBitCount = 32
     buf = ctypes.create_string_buffer(w * h * 4)
     gdi32.GetDIBits(mfc, bmp, 0, h, buf, ctypes.byref(bmi), 0)
-    Image.frombuffer('RGBA', (w, h), buf, 'raw', 'BGRA', 0, 1).convert('RGB').save(out)
+    with open(out, 'wb') as f:
+        f.write(bgra_to_png(w, h, buf))
     gdi32.DeleteObject(bmp); gdi32.DeleteDC(mfc); user32.ReleaseDC(hwnd, hdc)
     return (w, h)
 

@@ -1,7 +1,21 @@
 /* 对弈学习器 · 棋盘 + 完整对局设置（引擎尚未接入） */
 
 let N = 19;
-const L = 'abcdefghijklmnopqrs';
+/*★ 坐标字母表**只有这一份**。
+   围棋坐标传统上**跳过 I**（I 和 J 形近、也怕和数字 1 混）——
+   业界（棋谱 / GTP / 各类围棋软件）全都如此，所以界面上显示 A B C… H **J** K…
+   **不是 bug，是标准。**
+
+   ⚠️ 这里曾经有**两份**字母表，另一份是 `L = 'abcdefghijklmnopqrs'`（含 I），
+   被 SGF 导出的三处代码用（`[${L[x]}${L[y]}]`），而显示层和引擎层都用不含 I 的
+   那份 → **从第 9 列（J）起 SGF 坐标全部错位一列**（第 9 列导出成 I、第 10 列
+   导成 J……），导入导出棋谱时就是错的。已全部换成这一份。
+
+   ★ 为什么放在文件最顶部（而不是原来 2347 行的位置）：
+     `const` 有暂时性死区（TDZ），而 `draw()` 在文件开头（约 210 行）就可能被调用
+     —— 放在后面，那一帧会直接抛 `Cannot access 'GTP_COLS' before initialization`。
+     字母表是纯常量，放最顶最安全。 */
+const GTP_COLS = 'ABCDEFGHJKLMNOPQRST';
 const idx = (x, y) => y * N + x;
 
 const settings = {
@@ -271,9 +285,11 @@ function draw() {
     ctx.beginPath(); ctx.arc(cx, cy, Math.max(1.5, gap * 0.075), 0, 7); ctx.fill();
   }
 
-  /* 棋盘坐标（可开关）：底边 A–T（跳过 I，与 GTP 一致），左边 1–N 从下往上数 */
+  /* 棋盘坐标（可开关）：底边 A–T、���边 1–N 从下往上数。
+     ★ 用 GTP_COLS 而不是另写一份字母表 —— 之前这里、toGTP、SGF 导出各有一份，
+       三份表一旦改了一处忘了另一处，坐标就会错位（真发生过，见第 4 行注释）。 */
   if (state.showCoords) {
-    const cols = 'ABCDEFGHJKLMNOPQRST';
+    const cols = GTP_COLS;
     ctx.fillStyle = 'rgba(122,94,58,.74)';
     ctx.font = `${Math.max(9, gap * 0.38).toFixed(1)}px "Microsoft YaHei", sans-serif`;
     ctx.textAlign = 'center';
@@ -1108,8 +1124,8 @@ function buildSGF() {
     + `PB[${sgfn(clockName('b'))}]PW[${sgfn(clockName('w'))}]`;
   if (R.seats) s += 'GC[明清规则：座子制 · 还棋头]';
   if (R.seats || settings.handicap) {
-    const bs = state.setup.filter(p => p.color === 'b').map(p => `[${L[p.x]}${L[p.y]}]`).join('');
-    const ws = state.setup.filter(p => p.color === 'w').map(p => `[${L[p.x]}${L[p.y]}]`).join('');
+    const bs = state.setup.filter(p => p.color === 'b').map(p => `[${GTP_COLS[p.x]}${N - p.y}]`).join('');
+    const ws = state.setup.filter(p => p.color === 'w').map(p => `[${GTP_COLS[p.x]}${N - p.y}]`).join('');
     if (!R.seats) s += `HA[${settings.handicap}]`;   // 座子不是让子，不写 HA
     if (bs) s += `AB${bs}`;
     if (ws) s += `AW${ws}`;
@@ -1126,7 +1142,7 @@ function buildSGF() {
       : (r.winner === 'b' ? '黑方胜' : '白方胜') + r.lead.toFixed(1) + r.unit) + ']';
   }
   for (const m of state.moves.slice(0, upto)) {
-    s += ';' + (m.color === 'b' ? 'B' : 'W') + (m.pass ? '[]' : `[${L[m.x]}${L[m.y]}]`);
+    s += ';' + (m.color === 'b' ? 'B' : 'W') + (m.pass ? '[]' : `[${GTP_COLS[m.x]}${N - m.y}]`);
   }
   return s + ')';
 }
@@ -2334,8 +2350,7 @@ function applyNewGame(idle) {
 
 /* ---------------- 引擎分析 ---------------- */
 
-const GTP_COLS = 'ABCDEFGHJKLMNOPQRST';        // GTP 列字母（跳过 I）
-/* 单次分析的目标搜索量。
+/*单次分析的目标搜索量。
    ★ 2026-10-04 从 1600 降到 500 —— 这是「推荐点要实时出现」的关键。
      问题不在我们的显示逻辑，而在**引擎一次只能算一个请求**：
      旧局面的分析要跑满 1600 visits（约 2~3 秒）才轮到新局面，
