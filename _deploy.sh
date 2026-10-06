@@ -58,7 +58,8 @@ echo "=== 5/5 更新 Release 资产（--clobber 覆盖同名的）==="
 VER=$(grep -o '"version": *"[^"]*"' package.json | head -1 | cut -d'"' -f4)
 TAG="v${VER}"
 if "$GH" release view "$TAG" --repo Rapace7/RapaceGo > /dev/null 2>&1; then
-  for f in dist/RapaceGo.exe dist/RapaceGo.zip; do
+  # ★ 只上传 zip：2026-10-06 起不再出 portable 单文件版（实测慢 400 倍且不便携）
+  for f in dist/RapaceGo.zip; do
     [ -f "$f" ] || continue
     echo "  上传 $f"
     "$GH" release upload "$TAG" "$f" --repo Rapace7/RapaceGo --clobber 2>&1 | tail -1

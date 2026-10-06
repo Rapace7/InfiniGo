@@ -120,16 +120,19 @@ RapaceGo/
 features simply stay unused. Anywhere else works too: set it in the app's Settings, or
 via the `RAPACEGO_KATAGO` / `RAPACEGO_LOGOS` environment variables.
 
-### Option 1: download the portable build (recommended)
+### Option 1: download the ready-to-run build (recommended)
 
 Grab it from the **[Releases page](https://github.com/Rapace7/RapaceGo/releases)**:
 
 | File | Size | Notes |
 |---|---|---|
-| `RapaceGo.zip` | ~147 MB | **unzip and run — fastest startup** ⭐ |
-| `RapaceGo.exe` | ~96 MB | single file, double-click (unpacks to temp on each launch) |
+| `RapaceGo.zip` | ~147 MB | unzip it once, then launch from the folder — **fastest startup** ⭐ |
 
-Drop the two engine folders next to it and you're done.
+That is the only download: the build ships as a single archive so that **everything lives
+in one folder** — the engines, your game records, the settings. Copy that folder anywhere and
+it still works; delete it and nothing is left behind.
+
+Drop the two engine folders next to `RapaceGo.exe` and you're done.
 
 ### Option 2: run from source (to change the code)
 

@@ -33,14 +33,19 @@
       "package.json"
     ],
     "win": {
+      /* ★ 只出 zip 免安装包，不再出 portable 单文件 exe（2026-10-06 用户决定）。
+         实测原因（详见开发记录四十二节）：
+         - portable 每次启动都把自己解压到 %TEMP% 下的随机目录：376MB 要 120 秒，
+           而 zip 版解压完启动只要 0.3 秒。
+         - 更致命的是它和「便携」相反：exe 在 C 盘临时目录，引擎找不到、棋谱也存到
+           那里，整个文件夹拷不走；zip 版才是真正的「一个文件夹，拷走就能用」。
+         要恢复：加回 portable target 和 "portable".artifactName 两处即可。 */
       "target": [
-        { "target": "portable", "arch": ["x64"] },
         { "target": "zip", "arch": ["x64"] }
       ],
       "icon": "assets/app.ico",
       "artifactName": "RapaceGo.${ext}"
     },
-    "portable": { "artifactName": "RapaceGo.exe" },
     "extraFiles": [
       { "from": "下载讲解模型.bat", "to": "." }
     ]
