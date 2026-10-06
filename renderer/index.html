@@ -447,7 +447,7 @@
       <button id="set-shortcut" title="在桌面放一个带图标的「玄清围弈」——双击就能开">在桌面创建快捷方式</button>
       <div class="spacer"></div>
       <button id="set-cancel">取消</button>
-      <button id="set-save" class="primary" title="保存路径。原本开着的引擎会用新配置重新加载，没开的保持不加载。">保存</button>
+      <button id="set-save" class="primary" title="保存路径。原本开着的引擎会用新配置重新加载，没开的保持不加载。">保存并重启引擎</button>
     </div>
   </div>
 </div>
@@ -457,7 +457,12 @@
      ★ 改功能/改快捷键时记得回来同步这里，别让帮助跟软件说的不一样。 -->
 <div class="modal-mask" id="help">
   <div class="modal help-modal">
-    <h2>帮助 <span class="help-sub">玄清围弈 · 用 KataGo 陪你下棋</span></h2>
+    <h2>帮助 <span class="help-sub">玄清围弈 · 用 KataGo 陪你下棋</span>
+      <!-- 当前版本号：由 app.js 通过 api.appVersion() 填进来。
+           为什么放在帮助里：包名固定是 RapaceGo.zip（不带版本号），下载完从文件名看不出新旧，
+           用户得能在软件里确认自己装的是哪一版、要不要更新（更新方式见 README「如何更新」）。 -->
+      <span class="help-ver" id="help-ver"></span>
+    </h2>
 
     <div class="help-body">
       <p class="help-lead">

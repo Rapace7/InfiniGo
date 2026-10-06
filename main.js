@@ -1084,6 +1084,12 @@ ipcMain.handle('records:readCoach', (_e, name) => {
 ipcMain.handle('records:dir', () => RECORDS_DIR);
 ipcMain.handle('records:openDir', () => { shell.openPath(RECORDS_DIR); return { ok: true }; });
 
+/* 版本号（取自 package.json 的 version，打包后读的就是构建时的那个值）。
+   ★ 为什么要暴露给界面：用户判断「我装的是哪一版、要不要更新」只能靠它 ——
+     更新方式是把新包解压覆盖到同一个文件夹，而包名固定叫 RapaceGo.zip（不带版本号），
+     下载完从文件名看不出新旧，所以必须能在软件里看到当前版本。 */
+ipcMain.handle('app:version', () => app.getVersion());
+
 /* 导入棋谱（2026-10-04 用户要求）：从电脑里挑 SGF，复制进棋谱库。
    为什么需要：棋谱库只读 records/ 目录 —— 用户拿到别人的棋谱或下载的古谱，
    以前只能自己手动拷文件夹，等于没有入口。

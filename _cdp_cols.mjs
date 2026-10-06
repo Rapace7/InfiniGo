@@ -1,8 +1,10 @@
-/* 验证坐标字母表统一（2026-10-06 用户报「第 9 列起坐标错位」）：
-   ① 显示层底边字母必须是 A–H **J**–T（跳 I，这是围棋标准，不是 bug）
-   ② SGF 导出的坐标必须与显示一致（第 9 列 = J，不能是 I）
-   ③ SGF 导出 → 重新导入，坐标必须往返一致
-   ④ GTP 坐标（含 KATA_GO 用的那套）也一致 */
+/* 验证两套坐标字母表各自正确（2026-10-06 用户报「坐标少了 I」+ 我自己的一次改错）。
+
+   事实（用本机 21433 份真实职业棋谱统计过）：
+     · 界面/GTP 坐标 **跳过 I**（A B C D E F G H J K…）—— 围棋传统，**不是 bug**
+     · SGF 棋谱坐标 **包含 i**（a b c … h i j …）—— SGF 规范如此
+       证据：坐标字母 i 在职业棋谱里出现 16.4 万次；第 16 列是 p 不是 q。
+   所以本测试要同时钉住这两条 —— 少钉一条，下一个人（或下一个我）就会再改错一次。 */
 const PORT = 9333;
 async function getPage() {
   for (let i = 0; i < 60; i++) {
@@ -30,50 +32,47 @@ await send('Runtime.enable');
 
 const out = await js(`(function(){
   const R = {};
-  /* ---------- ① 字母表本身 ---------- */
-  R['① 字母表长度'] = GTP_COLS.length + '（应为19）';
-  R['① 第 8/9/10 个'] = GTP_COLS[7] + ' ' + GTP_COLS[8] + ' ' + GTP_COLS[9] + '（应为H J K）';
-  R['① 是否含 I'] = GTP_COLS.indexOf('I') < 0 ? '✓ 不含 I（围棋标准，跳过）' : '★ 含 I';
-  R['① 全部字母'] = GTP_COLS;
+  const eq = (a, b) => a === b ? '✓' : ('★ 期望 ' + b + '，实际 ' + a);
 
-  /* 关键：有没有第二份含 I 的表（那会让导出错位） */
-  let dup = null;
-  try { eval('L'); dup = '★ 还存在第二份 L=' + L; } catch (e) { dup = '✓ 只有一份表（旧的 L 已删）'; }
-  R['② 字母表唯一'] = dup;
+  /* ---------- ① 界面/GTP 表：必须跳过 I ---------- */
+  R['① 界面表长度'] = GTP_COLS.length + ' ' + eq(GTP_COLS.length, 19);
+  R['① 界面表全貌'] = GTP_COLS;
+  R['① 界面表不含 I'] = eq(GTP_COLS.indexOf('I'), -1);
+  const hjk = [GTP_COLS[7], GTP_COLS[8], GTP_COLS[9]].join('');
+  R['① 第8/9/10列'] = hjk + ' ' + eq(hjk, 'HJK');
 
-  /* ---------- ③ 逐列对照：显示用的列字母 vs SGF 导出的列字母 ---------- */
-  settings.mode = 'edit'; applyNewGame();
-  /* 底边一整排（y=18 是最底行）：x=0(A) 7(H) 8(J) 9(K) 10(L) 18(T) */
-  for (const x of [0, 7, 8, 9, 10, 18]) tryPlay(x, 18);
+  /* ---------- ② SGF 表：必须包含 i ---------- */
+  R['② SGF表长度'] = SGF_COLS.length + ' ' + eq(SGF_COLS.length, 19);
+  R['② SGF表全貌'] = SGF_COLS;
+  R['② SGF第9列是 i'] = SGF_COLS[8] + ' ' + eq(SGF_COLS[8], 'i');
+  R['② SGF第16列是 p'] = SGF_COLS[15] + ' ' + eq(SGF_COLS[15], 'p');
+
+  /* ---------- ③ 两套表必须不同（相同 = 又被合并了）---------- */
+  R['③ 两套表不同'] = (GTP_COLS !== SGF_COLS) ? '✓' : '★ 被合并成一套了，一定有一边是错的';
+
+  /* ---------- ④ 导出实测：最底行 x=0/7/8/9/18 ---------- */
+  settings.mode = 'edit'; settings.rules = 'chinese'; settings.size = 19;
+  settings.handicap = 0; settings.komi = 7.5; applyNewGame();
+  for (const x of [0, 7, 8, 9, 18]) tryPlay(x, 18);
   const sgf = buildSGF();
-  /* 不去猜正则 —— 直接把 SGF 里的着手片段截出来看 */
-  const tail = sgf.slice(sgf.indexOf(';B['));
-  R['③ SGF 实际导出'] = tail;
-  R['③ 期望'] = ';B[A19];B[H19];B[J19];B[K19];B[L19];B[T19]';
-  const got = tail.split(';B[').filter(Boolean).map(s => s.slice(0, s.indexOf(']'))).join(' ');
-  const want = 'A19 H19 J19 K19 L19 T19';
-  R['③ 拆出的坐标'] = got;
-  R['③ 判定'] = (got === want) ? '✓ 完全一致（第 9 列 = J，没被错成 I）' : ('★ 实际: ' + got);
+  const coords = sgf.split(';B[').slice(1).map(s => s.slice(0, s.indexOf(']'))).join(' ');
+  R['④ 导出的坐标'] = coords;
+  R['④ 期望'] = 'as hs is js ss';
+  R['④ 判定'] = eq(coords, 'as hs is js ss');
 
-  /* 逐点验证 toGTP（引擎与显示共用的换算） */
-  const probes = [];
-  for (const x of [0, 7, 8, 9, 10, 18]) {
-    probes.push(x + '→' + toGTP(x, 18));
-  }
-  R['④ 底边各列（GTP）'] = probes.join('  ');
-  R['④ 期望'] = '0→A  7→H  8→J  9→K  10→L  18→T';
-
-  /* 往返一致性：SGF 文本 → 解析回来，坐标必须完全还原 */
+  /* ---------- ⑤ 往返：导出 → 解析回来必须一致 ---------- */
   const parsed = parseSGF(sgf);
-  const rt = (parsed && parsed.moves ? parsed.moves : []).map(m => m.pass ? 'pass' : GTP_COLS[m.x] + (N - m.y));
-  R['⑥ SGF 往返'] = rt.join(' ');
-  R['⑥ 期望'] = 'A19 H19 J19 K19 L19 T19';
-  R['⑥ 判定'] = (rt.join(' ') === 'A19 H19 J19 K19 L19 T19') ? '✓ 往返无损' : '★ 往返有损';
+  const rt = (parsed && parsed.moves ? parsed.moves : [])
+    .map(m => m.pass ? 'pass' : (SGF_COLS[m.x] + SGF_COLS[m.y])).join(' ');
+  R['⑤ 解析回来'] = rt;
+  R['⑤ 往返一致'] = eq(rt, 'as hs is js ss');
 
-  /* fromGTP 反向：J 应该是第 8 列（下标），不是 9 */
-  const bk = ['A','H','J','K','L','T'].map(c => c + '->' + (fromGTP(c + '1') ? fromGTP(c + '1').x : 'null'));
-  R['⑤ fromGTP 反查下标'] = bk.join('  ');
-  R['⑤ 期望'] = 'A->0  H->7  J->8  K->9  L->10  T->18';
+  /* ---------- ⑥ 反向：手写含 i 的 SGF，看读得对不对 ---------- */
+  const p2 = parseSGF('(;GM[1]FF[4]SZ[19];B[id];W[jd];B[dd])');
+  const got2 = (p2.moves || []).map(m => m.x + ',' + m.y).join(' | ');
+  R['⑥ 读含 i 的棋谱'] = got2;
+  R['⑥ 期望(x,y)'] = '8,3 | 9,3 | 3,3';
+  R['⑥ 判定'] = eq(got2, '8,3 | 9,3 | 3,3');
 
   applyNewGame();
   return R;

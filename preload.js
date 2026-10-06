@@ -5,6 +5,9 @@ contextBridge.exposeInMainWorld('api', {
   /* 引擎状态：{ ok, model, ready, error } */
   engineStatus: () => ipcRenderer.invoke('engine:status'),
 
+  /* 当前版本号（如 '0.1.1'）。界面显示在「帮助」面板上 —— 用户靠它判断要不要更新。 */
+  appVersion: () => ipcRenderer.invoke('app:version'),
+
   /* 请求分析（strong 引擎）：{ initialStones, moves, rules, komi, size, maxVisits }
      → Promise<最终报告 | { error }> */
   analyze: req => ipcRenderer.invoke('engine:analyze', req),

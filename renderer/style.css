@@ -260,6 +260,12 @@ main { flex: 1; display: flex; min-height: 0; }
    JS 侧是 makeTyper —— 自己按固定速度放字，不直接贴流式片段
    （网络会把几个 token 攒成一块，贴上去就是「一顿一顿地跳」）。 */
 .coach-body .just { animation: coachCharIn .4s ease-out both; }
+/* ★ 这几处的文字**必须能被选中复制**（body 上是全局 user-select: none）。
+   原因：README 明确告诉看不懂中文的人「把讲解选起来丢进翻译工具」——
+   而全局禁选会让这句话根本没法执行（实测：整段讲解一个字都选不中）。
+   放开的范围：讲解正文（三个讲解面板）、复盘报告、帮助正文 —— 都是「要读、要抄」的内容。
+   界面控件仍保持禁选，更像原生应用（也避免拖选到按钮文字）。 */
+.coach-body, .rv-modal, .help-body { user-select: text; -webkit-user-select: text; }
 @keyframes coachCharIn { from { opacity: .15; } to { opacity: 1; } }
 
 .side {
@@ -797,6 +803,8 @@ main { flex: 1; display: flex; min-height: 0; }
 .help-modal { width: 660px; max-height: 84vh; display: flex; flex-direction: column; }
 .help-modal h2 { margin-bottom: 10px; }
 .help-sub { font-size: 12px; font-weight: 400; color: var(--text-dim); margin-left: 8px; }
+/* 帮助面板标题右侧的版本号（由 api.appVersion() 填） */
+.help-ver { font-size: 11.5px; font-weight: 400; color: var(--text-dim); margin-left: 6px; }
 
 .help-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px; }
 .help-body p { font-size: 12.5px; line-height: 1.8; margin: 0 0 10px; }

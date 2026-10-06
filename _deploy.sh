@@ -121,19 +121,45 @@ TOKEN=$("$GH" auth token)
 git push "https://x-access-token:${TOKEN}@github.com/Rapace7/RapaceGo.git" main:main 2>&1 | tail -2
 
 echo
-echo "=== 5/5 更新 Release 资产（--clobber 覆盖同名的）==="
+echo "=== 5/5 发布 Release ==="
+# ★ 版本号只在 package.json 一处维护；tag 与它同名（v0.1.1 这样）。
+#   版本号规则（2026-10-06 与用户定的）：
+#     第三位 = 修 bug / 小改动，**每次发布 +1**（可以频繁）
+#     第二位 = 攒够一个「用户能感觉到的新功能」才 +1
+#     第一位 = 只有 1.0.0（稳定到能推荐给任何人）
 VER=$(grep -o '"version": *"[^"]*"' package.json | head -1 | cut -d'"' -f4)
 TAG="v${VER}"
+# ★ 发布说明用一个**版本无关**的固定文件（下载 / 更新 / 引擎自备 / 硬件 / 说明）——
+#   这样每次发布不用重写一遍，也不会漏掉「怎么更新」这类必需信息。
+#   版本号本身由 --title 体现。
+NOTES="发布说明.md"
 if "$GH" release view "$TAG" --repo Rapace7/RapaceGo > /dev/null 2>&1; then
+  echo "  Release $TAG 已存在 → 覆盖资产 + 刷新说明"
   # ★ 只上传 zip：2026-10-06 起不再出 portable 单文件版（实测慢 400 倍且不便携）
   for f in dist/RapaceGo.zip; do
     [ -f "$f" ] || continue
     echo "  上传 $f"
     "$GH" release upload "$TAG" "$f" --repo Rapace7/RapaceGo --clobber 2>&1 | tail -1
   done
+  if [ -f "$NOTES" ]; then
+    "$GH" release edit "$TAG" --repo Rapace7/RapaceGo --notes-file "$NOTES" > /dev/null 2>&1 \
+      && echo "  说明已刷新（$NOTES）"
+  fi
   echo "  Release $TAG 已更新"
 else
-  echo "  Release $TAG 还不存在 —— 首次发布请手动跑 gh release create"
+  # 新版本：自动建一个新的 Release（旧版本的留在列表里当历史，别覆盖 —— 
+  # 用户靠「最上面那条」判断有没有更新，也要能看到自己那条）
+  echo "  Release $TAG 不存在 → 新建"
+  if [ -f "$NOTES" ]; then
+    "$GH" release create "$TAG" dist/RapaceGo.zip \
+      --repo Rapace7/RapaceGo \
+      --title "$TAG" \
+      --notes-file "$NOTES" 2>&1 | tail -2
+  else
+    "$GH" release create "$TAG" dist/RapaceGo.zip \
+      --repo Rapace7/RapaceGo --title "$TAG" --generate-notes 2>&1 | tail -2
+  fi
+  echo "  已创建 Release $TAG"
 fi
 
 echo

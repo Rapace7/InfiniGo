@@ -1,21 +1,22 @@
 /* 对弈学习器 · 棋盘 + 完整对局设置（引擎尚未接入） */
 
 let N = 19;
-/*★ 坐标字母表**只有这一份**。
-   围棋坐标传统上**跳过 I**（I 和 J 形近、也怕和数字 1 混）——
-   业界（棋谱 / GTP / 各类围棋软件）全都如此，所以界面上显示 A B C… H **J** K…
-   **不是 bug，是标准。**
+/*★ **两套坐标字母表，各自独立，绝对不能合并** —— 这是本文件最容易搞错的地方：
 
-   ⚠️ 这里曾经有**两份**字母表，另一份是 `L = 'abcdefghijklmnopqrs'`（含 I），
-   被 SGF 导出的三处代码用（`[${L[x]}${L[y]}]`），而显示层和引擎层都用不含 I 的
-   那份 → **从第 9 列（J）起 SGF 坐标全部错位一列**（第 9 列导出成 I、第 10 列
-   导成 J……），导入导出棋谱时就是错的。已全部换成这一份。
+   ① `GTP_COLS`（跳 I，A B C D E F G H J K …）：界面显示的坐标、发给引擎的 GTP 坐标。
+      围棋传统上跳过 I（I 和 J 形近、也怕和数字 1 混），业界一致。
 
-   ★ 为什么放在文件最顶部（而不是原来 2347 行的位置）：
-     `const` 有暂时性死区（TDZ），而 `draw()` 在文件开头（约 210 行）就可能被调用
-     —— 放在后面，那一帧会直接抛 `Cannot access 'GTP_COLS' before initialization`。
-     字母表是纯常量，放最顶最安全。 */
+   ② `SGF_COLS`（**含 i**，a b c d e f g h i j …）：棋谱文件（SGF 格式）的坐标。
+      SGF 规范里 a=1 … h=8, **i=9**, j=10 … s=19，**不跳 i**。
+
+   ★ 为什么能确定 SGF 用 i：拿本机 21433 份真实职业棋谱统计过 —— 坐标字母 i 出现
+     164101 次（例：`;W[id]` 就是第 9 列），而且第 16 列是 `p` 不是 `q`
+     （若跳 i，19 列会排到 q）。两种写法在这些棋谱里都能验出来。
+   ★ 曾经踩过的坑：我一度认为"两套表不一致 = bug"，把 SGF 导出也改用 GTP_COLS，
+     结果导出的棋谱从第 9 列起全部错位（`[GTP字母+数字]` 这种写法根本不是 SGF）。
+     **判断"哪一套对"要看它服务的外部规范，不能只看两套表是否一致。** */
 const GTP_COLS = 'ABCDEFGHJKLMNOPQRST';
+const SGF_COLS = 'abcdefghijklmnopqrs';
 const idx = (x, y) => y * N + x;
 
 const settings = {
@@ -551,12 +552,17 @@ function tryPlay(x, y, byAI) {
     ? { x: capAt.x, y: capAt.y } : null;
 
   state.moves.push({ x, y, color: state.toMove, captured });
-  playStoneSound();                      // 落子音效（可在开关里关掉）
   clockSwitch();                         // 结算本手用时，换对方
   state.toMove = state.toMove === 'b' ? 'w' : 'b';
   state.pv = null;                       // 变化图只对当前局面有效，落了子就收掉
   state.viewAt = state.moves.length;
   syncUI();
+  /* ★ 落子音效**放在重绘之后**起播（可在「显示」菜单里关掉）。
+     为什么不能提前：syncUI 里要把整张盘重画一遍（形势雾是 N×N 逐点画，很吃主线程），
+     而短音效只有 0.08~0.09 秒 —— 起播紧接着被主线程占住，开头会被啃掉，
+     听感上就是「这一下怎么这么轻」。setTimeout 0 让它排在本帧绘制之后，
+     人耳分辨不出这点延迟（见 playStoneSound 的注释②）。 */
+  setTimeout(playStoneSound, 0);
   return true;
 }
 
@@ -1124,8 +1130,8 @@ function buildSGF() {
     + `PB[${sgfn(clockName('b'))}]PW[${sgfn(clockName('w'))}]`;
   if (R.seats) s += 'GC[明清规则：座子制 · 还棋头]';
   if (R.seats || settings.handicap) {
-    const bs = state.setup.filter(p => p.color === 'b').map(p => `[${GTP_COLS[p.x]}${N - p.y}]`).join('');
-    const ws = state.setup.filter(p => p.color === 'w').map(p => `[${GTP_COLS[p.x]}${N - p.y}]`).join('');
+    const bs = state.setup.filter(p => p.color === 'b').map(p => `[${SGF_COLS[p.x]}${SGF_COLS[p.y]}]`).join('');
+    const ws = state.setup.filter(p => p.color === 'w').map(p => `[${SGF_COLS[p.x]}${SGF_COLS[p.y]}]`).join('');
     if (!R.seats) s += `HA[${settings.handicap}]`;   // 座子不是让子，不写 HA
     if (bs) s += `AB${bs}`;
     if (ws) s += `AW${ws}`;
@@ -1142,7 +1148,7 @@ function buildSGF() {
       : (r.winner === 'b' ? '黑方胜' : '白方胜') + r.lead.toFixed(1) + r.unit) + ']';
   }
   for (const m of state.moves.slice(0, upto)) {
-    s += ';' + (m.color === 'b' ? 'B' : 'W') + (m.pass ? '[]' : `[${GTP_COLS[m.x]}${N - m.y}]`);
+    s += ';' + (m.color === 'b' ? 'B' : 'W') + (m.pass ? '[]' : `[${SGF_COLS[m.x]}${SGF_COLS[m.y]}]`);
   }
   return s + ')';
 }
@@ -1158,39 +1164,88 @@ function buildSGF() {
    · 变体：SGF 里第一个 '(' 是根节点，**之后再出现的 '(' 都是变体** → 到那里就截断。
    · 认得出：SZ / KM / RU / AB / AW / ;B[xx] / ;W[xx] / 空 [] = 停一手。 */
 function parseSGF(text) {
-  const s = String(text || '').replace(/[\r\n]+/g, ' ');
-  /* ★ 找主分支的结尾（第一个「变体分支」的起点 = 第二个左括号）。
-     ⚠️ 必须**跳过方括号里的内容** —— 属性值（注释、引擎信息）里经常带括号。实测踩过：
-        LizzieYzy 导出的棋谱里 `C[引擎规则:中国古棋 胜率: 65.2% 不确定度: 12.9 (Transformer11B旗舰版 / 32k 计算量) 贴目: 7.5]`
-        里面那个 "(" 会被旧写法当成变体分支 → 棋谱在注释中间就被截断 → **一手都读不出来**
-        （2026-10-04：用户的真实棋谱明明 20 手，解析结果是 0 手，
-         导致「AI 复盘」点了只弹一句「这份棋谱里没有手顺」）。
-     顺带处理 `\]` 转义 —— SGF 里属性值内部的方括号是用反斜杠转义的。 */
-  let cut = s.length, depth = 0, inBracket = false;
-  for (let i = 0; i < s.length; i++) {
-    const ch = s[i];
-    if (inBracket) {
-      if (ch === '\\') { i++; continue; }
-      if (ch === ']') inBracket = false;
-      continue;
-    }
-    if (ch === '[') { inBracket = true; continue; }
-    if (ch === '(') { depth++; if (depth >= 2) { cut = i; break; } }
-    else if (ch === ')') depth--;
-  }
-  const main = s.slice(0, cut);
+  const s = String(text || '');
 
-  const prop = tag => {
-    const m = new RegExp('(?:^|[^A-Za-z])' + tag + '\\[([^\\]]*)\\]').exec(main);
-    return m ? m[1] : null;
+  /* ---------- 1) 切成 token：括号 / 节点属性 ----------
+     ★ 一个节点里可以有多组「标识 + 若干值」，例如 `;AB[pd]AW[dd]C[注释]`
+       —— 所以不能只挑 `;[BW][..]`，得把每组标识+值都正经读出来。
+     ★ 属性值里的 `\]` 是 SGF 的转义，要当普通字符，否则值里带方括号就把 token 切歪。 */
+  const toks = [];
+  let i = 0;
+  while (i < s.length) {
+    const c = s[i];
+    if (c === '(' || c === ')') { toks.push(c); i++; continue; }
+    if (c !== ';') { i++; continue; }
+    i++;
+    for (;;) {
+      while (i < s.length && /\s/.test(s[i])) i++;       // 标识前的空白
+      let id = '';
+      while (i < s.length && /[A-Za-z]/.test(s[i])) { id += s[i]; i++; }
+      if (!id) break;                                    // 这个节点读完了
+      const vals = [];
+      while (i < s.length && s[i] === '[') {
+        i++;
+        let v = '';
+        while (i < s.length) {
+          if (s[i] === '\\') { v += s[i] + (s[i + 1] === undefined ? '' : s[i + 1]); i += 2; continue; }
+          if (s[i] === ']') break;
+          v += s[i]; i++;
+        }
+        vals.push(v);
+        i++;                                             // 越过 ']'
+      }
+      toks.push({ id: id.toUpperCase(), vals });
+    }
+  }
+
+  /* ---------- 2) 走主分支 ----------
+     ★★ 2026-10-06 修正（用户报「导入棋谱只加载了前 N 手」）。
+     SGF 里 `(;A;B(;C)(;D))` 这种结构，**主分支 = 每个分支点的第一个子节点**（A,B,C），
+     不是「遇到第一个 ( 就收工」—— 旧写法正是后者，于是真实棋谱只要在中盘挂一个
+     变化图，后面全部丢掉。
+     实测本机 21433 份职业棋谱（抽样 1500 份）：
+       正确主线 106760 手 vs 旧写法 103282 手 → **16.9% 的文件被截断**；
+       最惨的一份原 305 手只剩 3 手；AlphaGo 对李世石那局原 280 手只剩 15 手。
+     （旧写法当初是为了解决「注释里的括号被当成分支」而写的 —— 那个问题现在由
+       第 1 步的 tokenizer 自然解决了：括号在属性值里根本不会被当成 token。） */
+  const nodes = [];                                      // 主分支上的属性节点（按出现顺序）
+  const skipTree = k => {                                // 跳过一整棵子树
+    let d = 0;
+    while (k < toks.length) {
+      if (toks[k] === '(') d++;
+      else if (toks[k] === ')') { d--; if (d === 0) return k + 1; }
+      k++;
+    }
+    return k;
   };
-  const grabPts = tag => {
+  const walk = k => {                                    // k 指向 '('
+    if (toks[k] !== '(') return k;
+    k++;
+    while (k < toks.length) {
+      const t = toks[k];
+      if (t === ')') return k + 1;
+      if (t === '(') {
+        k = walk(k);                                     // 第一个子 = 主分支，继续往下走
+        while (toks[k] === '(') k = skipTree(k);          // 其余兄弟整块跳过
+        continue;
+      }
+      nodes.push(t);
+      k++;
+    }
+    return k;
+  };
+  const head = toks.indexOf('(');
+  if (head >= 0) walk(head);                             // 只解析第一棵树（一个文件可能串着好几局）
+
+  const firstProp = id => {
+    for (const t of nodes) if (t.id === id && t.vals.length) return t.vals[0];
+    return null;
+  };
+  const allPts = id => {
     const out = [];
-    const r = new RegExp(tag + '((?:\\[[a-z]{0,2}\\])+)', 'g');
-    let m;
-    while ((m = r.exec(main))) {
-      for (const one of (m[1].match(/\[([a-z]{0,2})\]/g) || [])) {
-        const v = one.slice(1, -1);
+    for (const t of nodes) {
+      if (t.id !== id) continue;
+      for (const v of t.vals) {
         if (v.length === 2) out.push({ x: v.charCodeAt(0) - 97, y: v.charCodeAt(1) - 97 });
       }
     }
@@ -1198,21 +1253,22 @@ function parseSGF(text) {
   };
 
   const moves = [];
-  const re = /;\s*([BW])\[([a-z]{0,2})\]/g;
-  let m;
-  while ((m = re.exec(main))) {
-    const color = m[1] === 'B' ? 'b' : 'w';
-    const v = m[2];
+  for (const t of nodes) {
+    if (t.id !== 'B' && t.id !== 'W') continue;
+    const color = t.id === 'B' ? 'b' : 'w';
+    const v = t.vals.length ? t.vals[0] : '';
     if (!v) { moves.push({ color, pass: true }); continue; }      // [] = 停一手
     if (v.length !== 2) continue;
+    /* ★ 这里用 charCode-97 而不是查表 —— SGF 是 a=1…h=8,**i=9**,j=10…s=19，
+       与界面/GTP 那套「跳过 I」的字母表**不同**（见文件顶部 SGF_COLS 的注释）。 */
     moves.push({ color, x: v.charCodeAt(0) - 97, y: v.charCodeAt(1) - 97 });
   }
 
-  const size = parseInt(prop('SZ') || '19', 10) || 19;
-  const kmRaw = prop('KM');
+  const size = parseInt(firstProp('SZ') || '19', 10) || 19;
+  const kmRaw = firstProp('KM');
   const komi = kmRaw === null ? null : parseFloat(kmRaw);
-  const ab = grabPts('AB'), aw = grabPts('AW');
-  const ru = String(prop('RU') || '').toLowerCase();
+  const ab = allPts('AB'), aw = allPts('AW');
+  const ru = String(firstProp('RU') || '').toLowerCase();
   let rules = 'chinese';
   if (ru.indexOf('japan') >= 0) rules = 'japanese';
   else if (ru.indexOf('korea') >= 0) rules = 'korean';
@@ -1220,7 +1276,7 @@ function parseSGF(text) {
     rules = 'ancient';       // 明清：导出时 RU 也写 Chinese，靠「座子各 2 + 不贴目」认出来
   }
   /* 双方名字（别的软件导出的棋谱大多有；没有就是 null） */
-  const pb = prop('PB'), pw = prop('PW');
+  const pb = firstProp('PB'), pw = firstProp('PW');
   return { ok: moves.length > 0 || ab.length > 0, size, komi, rules, ab, aw, moves, pb, pw };
 }
 
@@ -3185,6 +3241,8 @@ if (window.api) {
   window.addEventListener('keydown', e => { if (e.key === 'Escape') closeEngineMenu(); });
 
   window.api.engineStatus().then(applyEngineStatus);
+  /* 版本号填到「帮助」面板上 —— 用户判断「要不要更新」的唯一依据（包名不带版本号）。 */
+  window.api.appVersion().then(v => { const el = $('help-ver'); if (el) el.textContent = 'v' + v; }).catch(() => { });
   window.api.onStatus(applyEngineStatus);
   /* 边算边刷（引擎每 0.25 秒推一次中途报告）。
      ★ 必须过滤掉「不是当前局面」的报告：补历史欠账的请求也会推中途报告（它成了主进程
@@ -3203,24 +3261,49 @@ if (window.api) {
 /* ---------------- 落子音效 ---------------- */
 
 /* 素材取自九宫争鼎开发包（game/assets/audio/go_stone_*.wav，44.1k/16bit/单声道，0.08–0.20 秒）
-   5 个变体随机播（且不与上一手重复），避免听腻。 */
+   5 个变体随机播（且不与上一手重复），避免听腻。
+
+   ★★ 2026-10-06 重写（用户报「有时候声音特别小、几乎听不见」）。三个原因，一起修：
+
+   ① **同一个元素被连续重播**：原来只有 5 个 Audio 元素全局轮流用，播之前先
+      `a.currentTime = 0` —— 而如果那个元素**还在播**，这就等于对正在播放的元素做 seek，
+      Chromium 会把声音掐断、或从中间接上，听起来就是「变轻了」甚至没声。
+      改法：每种音效预备 3 个副本（共 15 个元素，启动时全部预载），
+      播放时优先挑**没在播的那个** —— 不再去动正在播的元素。
+   ② **起播撞上重绘**：落子后紧接着要重画整张盘（形势雾是 N×N 逐点画，很吃主线程）。
+      在重绘**之前**起播的话，音频管线刚建好就被主线程占住，
+      两个只有 0.08/0.09 秒的短音效会被啃掉开头 —— 这也是「有时候」的来源。
+      改法：由调用方把起播挪到重绘之后（见 tryPlay 里的 setTimeout）。
+   ③ **整体偏轻**：实测 5 个音效的 RMS 是 8.4%~11.3%，旧代码又统一压到 volume 0.5。
+      现在按实测 RMS 归一、基准提到 0.85（数值见 SOUND_GAIN）。 */
 const SOUND_FILES = ['go_stone_0.wav', 'go_stone_1.wav', 'go_stone_2.wav', 'go_stone_3.wav', 'go_stone_4.wav'];
-const STONE_SOUNDS = SOUND_FILES.map(f => {
-  const a = new Audio('../assets/audio/' + f);
-  a.volume = 0.5;
-  a.preload = 'auto';
-  return a;
+/* 每个音效的音量：按实测 RMS 归一（基准 0.85 = RMS 11.3% 的那个）。
+   实测值 RMS%：0→8.4  1→11.3  2→10.9  3→9.4  4→10.9
+   0 和 3 比基准轻，补到 1.0 封顶（真值 1.14 / 1.02，封顶后仍比其余略轻一点，可接受）。 */
+const SOUND_GAIN = [1.0, 0.85, 0.88, 1.0, 0.88];
+const SOUND_COPIES = 3;                 // 每种 3 个副本 → 连点也不会撞上正在播的
+const SOUND_POOL = [];
+SOUND_FILES.forEach((f, i) => {
+  for (let k = 0; k < SOUND_COPIES; k++) {
+    const a = new Audio('../assets/audio/' + f);
+    a.volume = SOUND_GAIN[i] === undefined ? 0.85 : SOUND_GAIN[i];
+    a.preload = 'auto';
+    SOUND_POOL.push({ el: a, file: i });
+  }
 });
-let lastSoundIdx = -1;
+let lastSoundFile = -1;
 
 function playStoneSound() {
-  if (!state.soundOn || !STONE_SOUNDS.length) return;
-  let i;
-  do { i = Math.floor(Math.random() * STONE_SOUNDS.length); }
-  while (i === lastSoundIdx && STONE_SOUNDS.length > 1);
-  lastSoundIdx = i;
-  const a = STONE_SOUNDS[i];
-  try { a.currentTime = 0; a.play().catch(() => { }); } catch (e) { /* 播放失败就不出声，不打断对局 */ }
+  if (!state.soundOn || !SOUND_POOL.length) return;
+  /* 优先挑「没在播」的副本；极端连点导致全在播时，才退而用全部（概率极低） */
+  const free = SOUND_POOL.filter(x => x.el.paused || x.el.ended);
+  let pool = free.length ? free : SOUND_POOL;
+  /* 别和上一手用同一个音效（同一个文件听着会腻） */
+  const other = pool.filter(x => x.file !== lastSoundFile);
+  if (other.length) pool = other;
+  const pick = pool[Math.floor(Math.random() * pool.length)];
+  lastSoundFile = pick.file;
+  try { pick.el.currentTime = 0; pick.el.play().catch(() => { }); } catch (e) { /* 出声失败不打断对局 */ }
 }
 
 /* ---------------- 对局计时 ---------------- */

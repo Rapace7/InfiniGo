@@ -199,6 +199,59 @@ you can hover for what it is and where to find it:
 
 ---
 
+## Updating to a newer version
+
+**In one sentence: unzip the new build over your existing folder and let it overwrite. Your
+game records and settings are not touched.**
+
+### Three steps
+
+1. **Check which version you have** — open the app → **Help** (top-left) → the version is
+   shown next to the title (e.g. `v0.1.1`).
+   (The download is always named `RapaceGo.zip` **without** a version number, so the filename
+   can't tell you what you have — this is the only way.)
+
+2. **See if there's something newer** → <https://github.com/Rapace7/RapaceGo/releases>
+   The **topmost entry is the latest**, with its version and date in the title.
+
+3. **Close the app** → download the new `RapaceGo.zip` → **unzip it into the same folder**
+   (choose your current folder as the destination; when Windows asks, pick "Replace the files
+   in the destination") → double-click `RapaceGo.exe` again.
+
+### Why nothing is lost
+
+The archive contains **only the application** — none of your data:
+
+| Yours | In the archive? | After updating |
+|---|---|---|
+| `records\` — your SGF files, review reports, move-by-move commentary | ❌ no | **kept as-is** |
+| `settings.json` — the engine paths you configured | ❌ no | **kept as-is** |
+| `KataGo\`, `LoGos\` — the engines and the commentary model | ❌ no | **kept as-is** |
+| `userdata\` — app cache | ❌ no | kept (safe to delete, it gets rebuilt) |
+
+> ⚠️ **Always close the app before updating.** While it's running the files are locked, so the
+> overwrite fails or only partly completes — which looks like "still the old version after
+> updating", or the app won't start at all. Wait a few seconds after closing the window.
+
+### Belt and braces (optional)
+
+Copy the **`records` folder** somewhere else before updating. It's the only thing that
+**can't be recovered** if it's lost (your games and commentary); the app itself can always be
+downloaded again from the Releases page.
+
+### How the version numbers work
+
+| Digit | When it goes up | Example |
+|---|---|---|
+| **third** | Bug fixes and small changes. **+1 on every release**, may be frequent | 0.1.0 → **0.1.1** → 0.1.2 |
+| **second** | A new feature you can actually notice; only once a batch accumulates | 0.1.x → **0.2.0** |
+| **first** | Only `1.0.0`: stable enough to recommend to anyone | |
+
+No big jumps — every release only moves the third digit, so `0.1.1 → 0.1.2` just means
+"another batch of fixes".
+
+---
+
 ## Notes on the commentary
 
 - **Speed**: about 2–4 s for a 150–200 character explanation on an RTX 4070 Laptop.
