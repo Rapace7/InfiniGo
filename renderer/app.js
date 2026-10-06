@@ -1012,7 +1012,14 @@ $('btn-undo').onclick = () => {
   state.koPoint = null;          // 局面变了，打劫禁着点随之失效
   state.pv = null;               // 变化图基于当前候选点，局面变了就失效
   state.viewAt = state.moves.length;
+  /* ★ 局面变短了 → 必须截断分析队列与走势数据（truncateAnalysisTo 的注释里有实测数据）。
+     漏了这一步会导致「悔棋后分析彻底停住」，用户 2026-10-06 报过。 */
+  truncateAnalysisTo(state.moves.length);
   syncUI();
+  /* syncUI 里会 scheduleAnalysis()，它按新的 viewAt 重新入队 —— 但**当前局面这一项
+     若 history 里已经有值就不会入队**（scheduleAnalysis 的去重条件），
+     而悔棋后的局面恰恰是「算过但画面要重画」的。所以这里显式强制重算当前局面。 */
+  scheduleAnalysis(0, true);
 };
 
 $('btn-pass').onclick = () => {
@@ -2430,6 +2437,39 @@ function resetAnalysisState() {
   gameGen++;        // ★ 换局 / 换棋谱：作废在飞的那次分析（见 gameGen 的注释）
 }
 
+/* ★★ 悔棋 / 停一手 / 任何「局面变短」的操作之后必须调用（2026-10-06 实测定位）。
+ *
+ * 症状：悔棋后 KataGo 的分析**彻底停住**（搜索量不涨、胜率条不再更新）。
+ * 实测数据（_cdp_undo.mjs）：落 10 手后悔棋 3 次 →
+ *     moves=7，但队列 q=[5,6,7,8,9,10]（**8/9/10 已是��存在的局面**），
+ *     history 的有效项数涨到 11（**比手数还多**），visits 恒定在 515 不动。
+ *
+ * 两个根因（缺一不可）：
+ *   ① **队列没截断** —— 里面留着比当前手数大的 at。runAnalysisOnce(8) 会去算
+ *      `state.moves.slice(0, 8)`，可moves 只有 7 —— 请求发出去算的是第 7 手，
+ *      回来却按「第 8 手」写进 history（rememberEval(at) 用的是传入的 at）。
+ *      结果：**脏数据灌进 history/leads**，而且这些永远算不完的欠账
+ *      把 anaBusy 一直占着（busy 卡在 true）→ 真正的当前局面再也排不上队。
+ *   ② **history / leads 没截断** —— 已撤销的那些手的走势数据留在数组里。
+ *      走势曲线会画出不存在的「第 8、9、10 手」，点进手数列表也能看到幽灵数据。
+ *
+ * 只做① 不做 ② 的话，曲线仍然是错的；反过来 ① 会让分析继续卡死。
+ */
+function truncateAnalysisTo(len) {
+  /* 队列里超过新手数的一律丢掉（它们代表的局面已经不存在了）。
+     注意是「过滤」不是「清空」—— 当前局面那一项还要留着，它是对的。 */
+  anaQueue = anaQueue.filter(at => at <= len);
+  /* history / leads 截断到 len+1 个元素（索引 at 表示「第 at 手之后」，
+     所以合法索引是 0..len）。多出来的直接砍掉。 */
+  if (state.history.length > len + 1) state.history.length = len + 1;
+  if (state.leads.length > len + 1) state.leads.length = len + 1;
+  /* candAt / ownAt 也别指着不存在的局面，否则候选点和形势雾会被当成过期的画淡。 */
+  if (state.candAt > len) state.candAt = -1;
+  if (state.ownAt > len) { state.ownership = null; state.ownAt = -1; }
+  /* 曲线 / 手数列表不用在这里刷 —— 调用方紧接着就 syncUI()，那里会重画。
+     在这里刷等于每悔棋一次多两次全量重绘。 */
+}
+
 /* ★ 单飞（同一时刻只允许一次分析在飞）—— 2026-10-04 实测定位出的 bug：
    原来每次落子都发一个分析请求，而 main.js 里**每个新请求都会 `terminateId` 掐掉前一个**
    （见 main.js 的 analyze()）。落子快过分析时，引擎陷进「启停风暴」：
@@ -2482,6 +2522,14 @@ async function runAnalysis() {
       /* ② 再补欠账：把队列里「还没有 history」的手数从旧到新算出来（只写 history，不动画面）。 */
       const at = anaQueue.shift();
       if (at === undefined) break;               // 没有欠账了
+      /* ★★ 越界欠账直接丢（2026-10-06 实测定位到的坑）。
+         悔棋后队列里会残留比当前手数大的 at（那些局面已经不存在了）。
+         若不拦：runAnalysisOnce(8) 会去算 `moves.slice(0, 8)` —— moves 只有 7 手，
+         引擎算的其实是第 7 手，回来却按「第 8 手」写进 history[8]，
+         **JS 数组会因此扩容**（实测 7 手的 history 长度涨到 11）。
+         这些幽灵数据让 anaBusy 长期占着（busy 卡在 true），
+         真正的当前局面再也排不上队 → **用户看到的现象就是「悔棋后分析停住了」**。 */
+      if (at > state.moves.length) continue;
       if (typeof state.history[at] === 'number') continue;   // 已经补上了（比如刚作为当前局面算过）
       if (at === cur) continue;                  // 当前局面刚算过
       await runAnalysisOnce(at);
@@ -2572,6 +2620,13 @@ async function runAnalysisOnce(at) {
 function rememberEval(at, blackWin, blackLead) {
   if (!(at >= 0)) return;
   if (state.draft && at > state.draft.from) return;
+  /* ★★ 越界拒收（2026-10-06）。这是 history / leads 的**唯一写入口**，
+     所以在这里拦一次就够 —— 上面 runAnalysis 里的过滤是第二道防线（少一次无效请求）。
+     为什么必须拦：JS 的 `arr[99] = v` 会**把数组扩容到 100**，
+     于是「7 手棋」的 history 长度变成 11（实测），
+     走势曲线会画出根本不存在的第 8、9、10 手，手数列表里也有幽灵数据。
+     场景：悔棋后队列里残留了已撤销手数的欠账，那次请求回来就写越界了。 */
+  if (at > state.moves.length) return;
   if (typeof blackWin === 'number') state.history[at] = blackWin;
   if (typeof blackLead === 'number') state.leads[at] = blackLead;
   renderCurve();

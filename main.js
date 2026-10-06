@@ -852,6 +852,17 @@ function createWindow() {
     /* 窗口标题：中文名 + 英文名（英文名是产品对外的名字，2026-10-05 从
        InfiniGo 改成 RapaceGo —— 取自作者的 ID，带个人名片色彩） */
     title: '玄清围弈 · RapaceGo',
+    /* ★ 窗口图标必须显式给。实测（2026-10-06）：不设时 Windows 会按「打包 exe 里嵌的图标」
+       回退 —— 而 **portable 单文件版解压到临时目录后，exe 路径变了，图标资源取不到**，
+       任务栏/标题栏会显示成别的程序（用户报「图标是 OgaTak 的」）甚至空白。
+       打包模式下 __dirname 是 resources\app，assets/app.ico 就在那儿（files 里已包含）。
+       开发模式下 __dirname 是项目根，同样能找到。找不到就交给系统回退，不报错。 */
+    icon: (() => {
+      try {
+        const p = path.join(__dirname, 'assets', 'app.ico');
+        return fs.existsSync(p) ? p : undefined;
+      } catch (e) { return undefined; }
+    })(),
     backgroundColor: '#f7f6f3',
     autoHideMenuBar: true,
     webPreferences: {

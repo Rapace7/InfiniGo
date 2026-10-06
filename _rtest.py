@@ -14,7 +14,7 @@ APP = os.path.dirname(os.path.abspath(__file__))
 EXE = os.path.join(APP, 'node_modules', 'electron', 'dist', 'electron.exe')
 NODE = r'C:\Users\rapac\.workbuddy\binaries\node\versions\22.22.2-3\node.exe'
 G = APP + os.sep
-S1 = sys.argv[1] if len(sys.argv) > 1 else G + '_cdp_test.mjs'
+S1 = sys.argv[1] if len(sys.argv) > 1 else G + "_cdp_test.mjs"
 P1 = sys.argv[2] if len(sys.argv) > 2 else G + '_rule.png'
 S2 = sys.argv[3] if len(sys.argv) > 3 else None
 P2 = sys.argv[4] if len(sys.argv) > 4 else G + '_panel2.png'
@@ -127,16 +127,33 @@ if proc.poll() is not None:
     sys.exit(1)
 
 
-def run_node(script, tag):
-    print('--- %s: %s ---' % (tag, os.path.basename(script)), flush=True)
-    r = subprocess.run([NODE, script], capture_output=True, text=True,
-                       encoding='utf-8', errors='ignore', timeout=420)
+def run_node(script, tag, args=(), timeout=420):
+    print('--- %s: %s %s ---' % (tag, os.path.basename(script), ' '.join(args)), flush=True)
+    try:
+        r = subprocess.run([NODE, script] + list(args), capture_output=True, text=True,
+                           encoding='utf-8', errors='ignore', timeout=timeout)
+    except subprocess.TimeoutExpired as e:
+        # ★ 分段脚本里某一步挂死了 —— 把已拿到的部分输出打出来，别什么都看不到
+        #   （2026-10-06 连续三次超时、零信息，就是栽在这里）
+        print('!! 超时 %ds，已收到的部分输出：' % timeout, flush=True)
+        print((e.stdout or b'').decode('utf-8', 'ignore') if isinstance(e.stdout, bytes) else (e.stdout or ''))
+        if e.stderr:
+            print('[stderr]', (e.stderr.decode('utf-8', 'ignore') if isinstance(e.stderr, bytes) else e.stderr)[:600])
+        return
     print(r.stdout or '(无输出)')
     if r.stderr:
         print('[stderr]', r.stderr[:600])
 
 
 run_node(S1, '测试')
+# ★ 额外步骤：同一实例上按顺序跑（分段观察用）。测试脚本带参数时优先用它。
+EXTRA = os.environ.get('RAPACEGO_STEPS', '')
+if EXTRA:
+    for st in EXTRA.split(','):
+        st = st.strip()
+        if not st:
+            continue
+        run_node(S1, '步骤' + st, [st], timeout=180)
 
 hwnd = my_window(proc.pid)
 if not hwnd:
