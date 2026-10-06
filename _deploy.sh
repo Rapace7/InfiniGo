@@ -65,6 +65,36 @@ echo "=== 2/5 打包 ==="
 rm -rf dist/win-unpacked dist/*.exe dist/*.zip
 npm run dist 2>&1 | grep -E "building|packaging|error|Error" | tail -4
 
+# ---- 2b/5 同步到「正式版」目录 ----------------------------------------
+# ★ 为什么要这一步（2026-10-06 用户定的分工）：
+#   · D:\GoStudy\RapaceGo\      = **开发目录**（源代码 + node_modules，我改代码用）
+#   · D:\GoStudy\玄清围弈\       = **正式版**（用户双击用；exe 在根目录，引擎在同级）
+#   两者必须分开：开发目录里没有可双击的 exe（要走 npm 起），
+#   而 dist\win-unpacked 虽然能跑，但我每次打包会 rm -rf 它 —— 桌面快捷方式指向
+#   它就会突然失效。所以正式版要有一份**独立的、不参与打包流程**的拷贝。
+#   用户明确要求：**每次打包直接覆盖旧版，不用保留**（旧版本身有问题）。
+DEPLOY_DIR="D:/GoStudy/玄清围弈"
+if [ -d dist/win-unpacked ]; then
+  echo
+  echo "=== 2b/5 同步到正式版目录 ==="
+  # 先清掉上一次同步的**程序文件与资源**（保留 settings.json —— 里面是你配好的
+  # 引擎路径，删了要重新设置；保留 records\ —— 你的棋谱）
+  if [ -d "$DEPLOY_DIR" ]; then
+    find "$DEPLOY_DIR" -maxdepth 1 -mindepth 1 \
+      ! -name settings.json ! -name records \
+      -exec rm -rf {} + 2>/dev/null
+  else
+    mkdir -p "$DEPLOY_DIR"
+  fi
+  cp -r dist/win-unpacked/. "$DEPLOY_DIR/"
+  echo "  ✓ 已同步到 $DEPLOY_DIR（$(du -sh "$DEPLOY_DIR" 2>/dev/null | cut -f1)）"
+  echo "    保留：settings.json（引擎路径）、records/（你的棋谱）"
+  # 快捷方式要重建才指向新位置（指向旧的 exe 路径不会自动更新）
+  rm -f "$USERPROFILE/Desktop/玄清围弈.lnk" 2>/dev/null || true
+else
+  echo "  ★ 没有 dist\win-unpacked，跳过同步"
+fi
+
 echo
 echo "=== 3/5 提交 ==="
 git add -A
