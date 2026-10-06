@@ -1,4 +1,4 @@
-@echo off
+﻿@echo off
 chcp 65001 >nul
 setlocal enabledelayedexpansion
 title 玄清围弈 · 讲解模型一键安装

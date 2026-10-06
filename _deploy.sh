@@ -51,6 +51,36 @@ if ! "$N" -e "JSON.parse(require('fs').readFileSync('package.json','utf8'))" 2>/
   exit 1
 fi
 echo "  package.json 合法"
+# ★★ .bat 的编码与换行**必须**检查（2026-10-06 连踩两次，都发包出去了）：
+#   ① 换行必须是 CRLF —— 实测 LF 的 .bat 会让 cmd 把 echo 拆成「ho」、把中文当命令名，
+#      报一堆「不是内部或外部命令」（一键安装脚本直接跑不起来）。
+#   ② 编码必须是 **UTF-8 带 BOM** —— 实测同一个文件：
+#        无 BOM + chcp 65001 → 4 条 "is not recognized"（中文注释被当命令）
+#        带 BOM + chcp 65001 → 0 条 ✓
+#   为什么要写成检查而不是「记住」：这两种错在开发时完全看不出来，
+#   只有用户跑到那一步才暴露 —— 而用户看到的是「软件坏了」。
+#   ★ BOM 只在**文件里有非 ASCII 字符**（比如中文）时才要求 ——
+#     纯英文的 .bat（如 start.bat）不需要，加了也对但不必要。
+#     第一版检查没区分这点，把 start.bat 误报成错，特此修正。
+for b in *.bat; do
+  [ -f "$b" ] || continue
+  # 数 0x0d（CR）字节 —— 别用 grep '\r' 之类：不同调用方式下反斜杠会被吃掉/加倍，
+  # 结果可能变成「匹配字母 r」而**假通过**（我自己先踩了这个，白测一轮）。
+  cr=$(od -An -tx1 "$b" | tr ' ' '\n' | grep -c '^0d' || true)
+  if [ "${cr:-0}" -eq 0 ]; then
+    echo "  ★★ $b 不是 CRLF 换行 —— cmd 会解析坏（实测 echo 被拆开）。先修再发。"
+    exit 1
+  fi
+  # 数一下 0x80 以上的字节（od 出的十六进制里以 8~f 开头的）
+  nonascii=$(od -An -tx1 "$b" | tr ' ' '\n' | grep -c '^[89abcdef]' || true)
+  if [ "${nonascii:-0}" -gt 0 ]; then
+    if [ "$(head -c3 "$b" | od -An -tx1 | tr -d ' \n')" != "efbbbf" ]; then
+      echo "  ★★ $b 含中文但没有 UTF-8 BOM —— cmd 会把中文当命令（实测 4 条报错）。先修再发。"
+      exit 1
+    fi
+  fi
+done
+echo "  .bat 换行与 BOM OK"
 # ★ 打包前必须确认没有 RapaceGo 在运行：它会占着 dist\RapaceGo.exe，
 #   7-Zip 读不了 → portable 构建失败（zip 却正常，容易误判成"偶发"）。
 if tasklist //FI "IMAGENAME eq RapaceGo.exe" 2>/dev/null | grep -q RapaceGo.exe; then
