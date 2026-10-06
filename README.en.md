@@ -49,6 +49,22 @@ scratch-play ("what if") board; 9/13/19 lines; Chinese / Japanese / Korean / Min
 **Game library** — import / export / rename / delete / search SGFs, with badges for
 "reviewed" and "has commentary".
 
+**Commentary stored inside the SGF** (many downloaded records carry it, especially pro games
+and problem collections): the **Commentary** box (bottom right) shows the note for the move
+you are looking at. Click **Edit** to change it and it is **written back into the original
+file** (the first edit leaves a `.bak` backup).
+
+- The block of text at the **very start** of a record (collection source, "diagram 55",
+  who compiled it) shows up in the **“(before the game · notes)”** slot — go to the first
+  move and it is there. It can be edited and saved back too.
+- Only the one note you edited changes; everything else in the file stays byte-for-byte
+  identical.
+- **Blank lines inside commentary are collapsed**: pro commentary is usually one sentence
+  per line, and the blank lines are leftovers from the exporting tool.
+- For problem collections (one file holding several problems) the top bar shows
+  **“problem N of M”** — it only *labels* the position, it does **not** jump between
+  problems (that would touch the move range, engine requests, history and caches).
+
 **Manual engine loading** — the app starts with **no engine loaded** (zero VRAM).
 Click the indicator in the top bar when you want AI:
 
@@ -162,11 +178,14 @@ via the `RAPACEGO_KATAGO` / `RAPACEGO_LOGOS` environment variables.
 
 ### Option 1: download the ready-to-run build (recommended)
 
-Grab it from the **[Releases page](https://github.com/Rapace7/RapaceGo/releases)**:
+Grab it from the **[Releases page](https://github.com/Rapace7/RapaceGo/releases)** —
+take the **topmost entry** (its title carries the version number, e.g. `v0.1.10`).
+Do **not** look for a fixed version like `v0.1.0`: that is the *oldest* release, at the
+bottom of the list.
 
 | File | Size | Notes |
 |---|---|---|
-| `RapaceGo.zip` | ~147 MB | unzip it once, then launch from the folder — **fastest startup** ⭐ |
+| `RapaceGo.zip` | ~146 MB | unzip it once, then launch from the folder — **fastest startup** ⭐ |
 
 That is the only download: the build ships as a single archive so that **everything lives
 in one folder** — the engines, your game records, the settings. Copy that folder anywhere and
@@ -207,7 +226,7 @@ game records and settings are not touched.**
 ### Three steps
 
 1. **Check which version you have** — open the app → **Help** (top-left) → the version is
-   shown next to the title (e.g. `v0.1.1`).
+   shown next to the title (e.g. `v0.1.10`).
    (The download is always named `RapaceGo.zip` **without** a version number, so the filename
    can't tell you what you have — this is the only way.)
 
