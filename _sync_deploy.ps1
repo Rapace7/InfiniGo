@@ -25,8 +25,16 @@ param(
   [int]$KeepBackups = 2
 )
 $ErrorActionPreference = "Stop"
-$L = [char]13 + [char]10
-$P = [char]37
+# ★★ 2026-10-06 深夜踩过的坑，别再犯：
+#   `[char]13 + [char]10` 在 PowerShell 里是**数组相加**（得到两个元素的数组），
+#   不是字符串拼接。后果有两层，都很隐蔽：
+#     · 它当时在 `-join $L` 里当分隔符 → 报错或拼出怪东西
+#     · `$P = [char]37` 也是数组，于是 `$P + '~dp0'` 把 `%` 和 `~dp0` **拆成了两行** ——
+#       生成的 start.bat 里 `%~dp0` 变成换行的 `%` 和 `~dp0`，cmd 直接报
+#       「'~dp0"' 不是内部或外部命令」→ 那个 bat **根本跑不起来**（用户因此以为它没用）。
+#   正确写法：显式转成 [string] 再拼。
+$L = [string]([char]13) + [string]([char]10)
+$P = [string]([char]37)          # 就是 `%`，批处理里写 `%~dp0` 要用它
 
 function Step($n, $t) { Write-Host ""; Write-Host "=== $n $t ===" -ForegroundColor Cyan }
 
@@ -115,10 +123,16 @@ $lines = @(
   'rem    Some AI toolchains / terminals set it, so just clear it.',
   'rem ============================================================',
   'set ELECTRON_RUN_AS_NODE=',
-  'cd /d "' + $P + '~dp0"',
-  'start "" "' + $P + '~dp0RapaceGo.exe"'
+  'cd /d "__DP0__"',
+  'start "" "__DP0__RapaceGo.exe"'
 )
-$text = ($lines -join $L) + $L
+# ★★ 2026-10-06 深夜第二个坑（第一个是 $L/$P 当数组）：
+#   原来写的是  'cd /d "' + $P + '~dp0"',  这种"数组元素里做字符串拼接"的写法，
+#   PowerShell 会把 `,` 解析成 `+` 的右操作数 →
+#   **@(...) 里塌成 1 个元素**（实测：两个元素变成一个），拼出来的东西整段错位。
+#   所以这里先用**纯 ASCII 占位符**，全部拼完之后再用 .Replace() 换掉 ——
+#   方法调用没有歧义。要的是 `%~dp0`（`%` 的 ASCII 是 37）。
+$text = (($lines -join $L) + $L).Replace('__DP0__', [string]([char]37) + '~dp0')
 $bytes = [System.Text.Encoding]::ASCII.GetBytes($text)
 if ($DryRun) {
   Write-Host "  [DryRun] 会写入 start.bat（$($bytes.Length) 字节）"
