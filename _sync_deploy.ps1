@@ -19,7 +19,9 @@
 param(
   [string]$DeployDir = "D:\GoStudy\玄清围弈",
   [string]$Unpacked  = "D:\GoStudy\RapaceGo\dist\win-unpacked",
-  [switch]$DryRun
+  [switch]$DryRun,
+  [switch]$NoBackup,
+  [int]$KeepBackups = 2
 )
 $ErrorActionPreference = "Stop"
 $L = [char]13 + [char]10
@@ -44,13 +46,30 @@ if (-not (Test-Path $DeployDir)) { throw "目标目录不存在：$DeployDir" }
 Step "1/5" "备份现有正式版（可回退）"
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $bak = "D:\GoStudy\_backup_玄清围弈_$stamp"
-if ($DryRun) {
+if ($NoBackup) {
+  Write-Host "  已指定 -NoBackup：跳过备份（出问题就只能重打包）"
+} elseif ($DryRun) {
   Write-Host "  [DryRun] 会备份到 $bak"
 } else {
   New-Item -ItemType Directory -Path $bak -Force | Out-Null
   robocopy $DeployDir $bak /E /NFL /NDL /NJH /NJS /NP | Out-Null
   $n = (Get-ChildItem $bak -Recurse -File -ErrorAction SilentlyContinue | Measure-Object).Count
   Write-Host "  备份到 $bak（$n 个文件）"
+  # ★ 2026-10-06 深夜：备份必须限量。
+  #   每一份是 368MB 的完整程序目录 —— 一晚同步 4 次就 1.5GB，
+  #   用户直接问「你给我在 GoStudy 里新增的两个 backup 文件夹是啥玩意」。
+  #   现在只留最近 $KeepBackups 份，旧的删掉（进回收站，仍可捞）。
+  $olds = Get-ChildItem "D:\GoStudy" -Directory -Filter "_backup_玄清围弈_*" |
+          Sort-Object CreationTime -Descending | Select-Object -Skip $KeepBackups
+  if ($olds) {
+    Add-Type -AssemblyName Microsoft.VisualBasic
+    foreach ($d in $olds) {
+      try {
+        [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory($d.FullName, 'OnlyErrorDialogs', 'SendToRecycleBin')
+        Write-Host "  清掉旧备份（进回收站）：$($d.Name)"
+      } catch { Write-Host "  旧备份删不掉，跳过：$($d.Name)" }
+    }
+  }
 }
 
 # ---------- 2) 清掉旧程序文件（保留用户数据） ----------

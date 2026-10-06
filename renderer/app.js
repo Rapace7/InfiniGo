@@ -1408,7 +1408,16 @@ function parseSGF(text) {
     for (const p of nd.props) {
       if (p.id !== 'C' || !p.vals.length) continue;
       if (p.valAt && p.valAt.length) cSpan = [p.valAt[0], p.valAt[0] + p.vals[0].length];
-      const txt = unsgf(p.vals[0]);
+      /* ★★ 2026-10-06 深夜补（用户报「一点开编辑，所有文段自动划分并加空行」）。
+         真凶：有些棋谱（实测用户那份「绝艺解说」的职业棋谱）换行写的是
+         **`\r\r\n`（CR CR LF）**，全文 690 处；而 `<div pre-wrap>` 把它渲染成
+         「一个换行」，`<textarea>` 按 HTML 规范只保留 LF → `\r\r\n` 变成 `\n\n`
+         → **显示是紧凑的、编辑框里每句之间多一个空行**。
+         也就是说：这段文字在文件里本来就"多了一个 CR"，只是在只读显示时看不出来。
+         修法：解析时就用 nlForSGF 归一化（把 `\r\r\n` / 裸 CR / 裸 LF 全归成 CRLF）。
+         这样显示与编辑拿到的是**同一个值**，而且写回磁盘的也是同一个口径（幂等）。 */
+      /* 紧一点：把连续空行收成一个（见 tightenSGFText 的注释） */
+      const txt = tightenSGFText(nlForSGF(unsgf(p.vals[0])));
       if (!txt.trim()) continue;
       if (isRoot) rootComment = txt;
       else comments[movesHere.length ? moves.length : 0] = txt;
@@ -1466,6 +1475,35 @@ function nlForSGF(t) {
     .split(CR + LF).join(LF)      // CRLF → LF
     .split(CR).join(LF)          // 落单的 CR → LF
     .split(LF).join(CR + LF);    // LF → CRLF
+}
+
+/* ---------- 把连续空行收成一个（2026-10-06 深夜，用户第二次报同一个现象）----------
+   ★ 用户的原话：「一点开编辑，所有文段自动划分并加空行」。
+   第一轮我只修了 `\r\r\n`（CR CR LF）——那确实是一种"假空行"。但用户又发来截图，
+   指着第 38 手说还有。查下去才明白：**他嫌的不是假空行，是空行本身**。
+   实测他这份「绝艺解说」职业棋谱（499 条 C[]）：25 条带换行，
+      · 21 条是 `\r\r\n`（第一轮修的）
+      · 4 条是正常的 `\r\n\r\n`（段落空行）
+   两种在他的界面上都是「每句之间空一行」。而棋谱解说大多是**一句一行**的弹幕体，
+   空行只是导出工具排版留下的，读起来反而散。
+   所以这里再收一道：**连续两个及以上的换行压成一个**。
+   ★ 三处一致：显示（div）、编辑（textarea）、写回磁盘都用这个口径 ——
+     用户第一次报的正是"显示和编辑不一样"，不能再留这种缝。
+   ★ 非破坏性：只影响**界面与写回**的呈现；原文件在被用户主动保存前一字不动。 */
+function tightenSGFText(t) {
+  const CR = String.fromCharCode(13), LF = String.fromCharCode(10);
+  const CRLF = CR + LF;
+  const parts = String(t == null ? '' : t).split(CRLF);
+  /* ★ 第一版这里写错了两次，都记下来（判据/实现各错一次）：
+     ① 条件写成 `blank(p) && out.length && 上一个 === ''` ——
+        `'a'` 之后第一个空串会被 push，第二个空串来比较时比的是 `'a'`，
+        于是一个也压不掉（实测输出与输入一模一样）。
+     ② 我又想"保留一个空行当段落分隔"，但用户要的是**紧凑**：
+        他这份棋谱的解说是一句一行的弹幕体（「等于芈昱廷和李钦诚的位置互换」
+        这种），空行只是导出工具排版留下的 —— 留着就是"每句之间空一行"。
+     所以现在：**空行一律去掉**（含只在空白字符的行、含首尾）。 */
+  const kept = parts.filter(p => p.replace(/\s/g, '') !== '');
+  return kept.join(CRLF);
 }
 
 /* ---- 把某一手（或根节点）的解说词写回 SGF 文本（2026-10-06） ----
