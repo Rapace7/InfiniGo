@@ -21,6 +21,7 @@ param(
   [string]$Unpacked  = "D:\GoStudy\RapaceGo\dist\win-unpacked",
   [switch]$DryRun,
   [switch]$NoBackup,
+  [switch]$KeepUnpacked,
   [int]$KeepBackups = 2
 )
 $ErrorActionPreference = "Stop"
@@ -140,5 +141,22 @@ Write-Host "  settings.json   : katago=$($sj.katago)"
 Write-Host "                    coach =$($sj.coachServer)"
 $rc = (Get-ChildItem "$DeployDir\records" -File -ErrorAction SilentlyContinue | Measure-Object).Count
 Write-Host "  records 文件数  : $rc"
+
+# ---------- 6) 清掉中间产物 dist\win-unpacked ----------
+#  ★ 2026-10-06 深夜用户纠正：**「免解压版」只有 `玄清围弈` 一个**。
+#    `dist\win-unpacked` 是 electron-builder 的**中间产物**，我一度把它留着
+#    并当成"免解压版"，等于凭空多出一个 376MB、内容和正式版完全相同的副本，
+#    用户看到就问「你怎么在 dist 里又弄了一个免安装版」。
+#    现在同步完就删（要留着对比的用户自己加 -KeepUnpacked）。
+if ($KeepUnpacked) {
+  Write-Host "  已指定 -KeepUnpacked：保留中间产物 dist\win-unpacked"
+} elseif (Test-Path $Unpacked) {
+  try {
+    Remove-Item $Unpacked -Recurse -Force
+    Write-Host "  已删除中间产物 dist\win-unpacked（免解压版只留 $DeployDir 一个）"
+  } catch {
+    Write-Host "  ★ 中间产物删不掉（可能有程序占着）：$($_.Exception.Message)"
+  }
+}
 Write-Host ""
 Write-Host "完成。双击 $DeployDir\start.bat 即可试用新版本。" -ForegroundColor Green

@@ -164,16 +164,23 @@ GitHub 把下载文件都放在「发布 / Releases」里，认准**最上面那
 整理成下面这样。**引擎要放在软件旁边**，和 `RapaceGo.exe` 平级：
 
 ```
-RapaceGo/
-├─ RapaceGo.exe
-├─ KataGo/                      ← 2.1 解压出来的文件夹，整个改名成 "KataGo"
+RapaceGo/                         ← 解压出来的文件夹（有 70 多个文件，见下面说明）
+├─ RapaceGo.exe                   ← 双击启动（程序本体）
+├─ …（一堆 .dll / .pak / locales\ 等）← 软件自带的运行库，别删
+├─ KataGo/                        ← 你把 2.1 解压出来的文件夹整个改名成 "KataGo"
 │  ├─ katago.exe
 │  ├─ …（同目录里还有一堆 .dll，一起放着别删）
-│  └─ weights/                  ← 新建这个文件夹
+│  └─ weights/                    ← 新建这个文件夹
 │     ├─ b11c768nbt.bin.gz
 │     └─ b18c384nbt-humanv0.bin.gz
-└─ LoGos/                       ← 第 3 步才需要
+└─ LoGos/                         ← 第 3 步才需要
 ```
+
+> 💡 **解压后不要被"文件好多"吓到** —— 程序本体其实是一整套（约 368 MB），
+> 其中 `RapaceGo.exe` 一个就 245 MB（框架和代码都在里面），其余是它的运行库
+> （`*.dll`、`*.pak`、`locales\`、`resources\`）。**看不懂的不要删**，你要动的只有
+> `KataGo/`、`LoGos/` 这两个文件夹和「设置」里的路径。
+> 完整清单（哪些自带、哪些自动生成、哪些能删）见 `发布说明.md`。
 
 **2.4 在软件里指定位置**
 
