@@ -131,6 +131,34 @@ if [ -d dist/win-unpacked ]; then
     mkdir -p "$DEPLOY_DIR"
   fi
   cp -r dist/win-unpacked/. "$DEPLOY_DIR/"
+  # ★ 正式版要额外带一个 start.bat —— electron-builder 不会生成它。
+  #   作用只有一个：先 `set ELECTRON_RUN_AS_NODE=` 再启动。
+  #   这个变量一旦是 1，Electron 会把自己当成普通 Node 跑，报
+  #     "Cannot read properties of undefined (reading 'isPackaged')" 后立刻退出
+  #   —— 症状是「双击没反应」，很难自己想到是这个变量。
+  #   为什么必须在这里重建：上面那步 rm -rf 会把正式版目录清空（只留 settings/records），
+  #   手放的 start.bat 下次发布就没了 —— 踩过一次。
+  #   编码规矩（见文件里 .bat 检查那段）：**纯英文注释 + 无 BOM + CRLF**。
+  #   ★ 不能加 BOM：加了之后 cmd 会把第一行读成 '﻿@echo' →
+  #     报「'﻿@echo' 不是内部或外部命令」（实测）。中文注释也不行——
+  #     start.bat 不 chcp，注释里的中文在 cmd 里是乱码。
+  {
+    printf '@echo off\r\n'
+    printf 'rem ============================================================\r\n'
+    printf 'rem  XuanQing WeiYi - double-click to launch\r\n'
+    printf 'rem  Uses RapaceGo.exe in this same folder.\r\n'
+    printf 'rem\r\n'
+    printf 'rem  WHY CLEAR ELECTRON_RUN_AS_NODE FIRST:\r\n'
+    printf 'rem    When it is 1, Electron runs itself as plain Node and exits\r\n'
+    printf 'rem    with "Cannot read properties of undefined (reading isPackaged)".\r\n'
+    printf 'rem    Symptom: double-click does nothing.\r\n'
+    printf 'rem    Some AI toolchains / terminals set it, so just clear it.\r\n'
+    printf 'rem ============================================================\r\n'
+    printf 'set ELECTRON_RUN_AS_NODE=\r\n'
+    printf 'cd /d "%%~dp0"\r\n'
+    printf 'start "" "%%~dp0RapaceGo.exe"\r\n'
+  } > "$DEPLOY_DIR/start.bat"
+  echo "  ✓ 已生成 start.bat（先清 ELECTRON_RUN_AS_NODE 再启动）"
   echo "  ✓ 已同步到 $DEPLOY_DIR（$(du -sh "$DEPLOY_DIR" 2>/dev/null | cut -f1)）"
   echo "    保留：settings.json（引擎路径）、records/（你的棋谱）"
   # ★ 立刻删掉中间产物：它和正式版内容完全相同，留着白占 376MB，
