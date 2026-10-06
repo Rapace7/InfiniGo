@@ -85,6 +85,10 @@
       <span class="vtext" id="verdict-text"></span>
       <button id="verdict-close" title="收起（不影响对局，可随时按「数子」再看）">×</button>
     </div>
+    <!-- 题集的「第 N 题 / 共 M 题」已经并进顶栏状态行（那里本来就写着「第 N 手」）。
+         ⚠️ 不要改成棋盘上的浮层：实测棋盘四周只有 3px（上方）/ 34px（左右）空隙，
+         任何浮层都会盖住棋盘（这个坑踩过 —— 先做成普通块级元素，结果它成了
+         .board-wrap 的第三个 flex item，被挤到棋盘正中间）。 -->
     <canvas id="board"></canvas>
     <!-- 未开局（启动后的初始状态）：棋盘中央一个大胶囊按钮，点了才进「新对局」面板。
          ★ 这时棋盘是点不动的（见 app.js 的 tryPlay / state.noGame）。 -->

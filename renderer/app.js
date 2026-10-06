@@ -90,6 +90,9 @@ const state = {
   /* 棋谱自带的解说词（SGF 的 C[]，只取主分支）：下标 = 第几手（0 = 开局前）。
      只在「打谱」（state.fromRecord）时有内容；新开局的棋谱没有解说词。 */
   sgfComments: [],
+  /* 这份棋谱里「换了一道题」的位置（手数）。SGF 的题集用 `zz` 分隔，
+     抽样 3000 份真实棋谱：2.97% 的文件含它。只有一条的显示提示，两条以上才有意义。 */
+  quizTips: [],
   /* ★ 两条讲解的「存法」不一样（2026-10-05 用户定的）：
        · 分析讲解 explain[at] —— **跟手数走**：点评第 at 手，切到哪手就看哪手。
          之前只存最后一次，所以「讲完第 2 手点回第 1 手，框里还挂着第 2 手的内容」。
@@ -645,7 +648,7 @@ function syncUI() {
     ? '未开局 · 点棋盘中央的「新建对局」开始'
     : total === 0
       ? `${sizeTxt}${hcTxt}${koTxt}`
-      : `${sizeTxt}${hcTxt}${state.viewAt === total ? '进行中' : '回看中'} · 第 ${state.viewAt} 手 · 轮${sideToMove(state.viewAt) === 'b' ? '黑' : '白'}走`;
+      : `${sizeTxt}${hcTxt}${state.viewAt === total ? '进行中' : '回看中'} · 第 ${state.viewAt} 手 · 轮${sideToMove(state.viewAt) === 'b' ? '黑' : '白'}走` + quizTxt();
   /* 试下（草稿）期间状态栏必须一直提醒 —— 否则过一会儿就忘了自己在草稿里，
      回头还以为「明明下过怎么会没了」。 */
   const draftTxt = state.draft ? '试下中（草稿 · 不影响正式对局）' : '';
@@ -1428,6 +1431,9 @@ function applyRecord(rec, srcName) {
   /* ★ 棋谱自带的解说词（SGF 的 C[]，主分支逐手）—— 右下角那个「解说词」框就是显示它。
      没有就是空数组（多数自己导出的棋谱没有）。 */
   state.sgfComments = Array.isArray(rec.comments) ? rec.comments.slice() : [];
+  /* 一份题集里串了多道题时的分界位置（`zz` 分隔标记所在的手数）——
+     只用来显示「第 N 题 / 共 M 题」，**不做切换**。 */
+  state.quizTips = Array.isArray(rec.seps) ? rec.seps.slice() : [];
   /* 棋谱里带的双方名字 → 右侧 ID 栏（没有就留空，回落到默认叫法） */
   const cleanName = v => String(v || '').replace(/[\[\]\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 24);
   state.names = { b: cleanName(rec.pb), w: cleanName(rec.pw) };
@@ -2512,6 +2518,7 @@ function applyNewGame(idle) {
   N = settings.size;
   state.fromRecord = false;     // 新开的局不是打谱
   state.sgfComments = [];       // 新开局没有「棋谱自带的解说词」
+  state.quizTips = [];           // 也不是题集，没有「第几题」
   state.recName = '';           // ★ 也不是某份棋谱了 —— 讲解没有存放处（全盘讲解按钮会收起）
   clearCoachPanels();           // 讲解只在对局期间保留（用户要求：开新局就清）
   const R = RULES[settings.rules] || RULES.chinese;
@@ -4142,6 +4149,31 @@ function renderMoveList() {
    参照 MultiGo 的那个框：显示**当前看着的这一手**在棋谱文件里写的解说。
    数据来自 parseSGF 交出来的 comments（**只取主分支** —— 我们不做分支树，用户定的）。
    编辑：直接改棋谱文件里那一个 C[]（见 patchSGFComment），第一次覆盖前会留 .bak。 */
+
+/* 「第几题 / 共几题」的提示文字（2026-10-06）。
+   ★ 放在**顶栏状态行**里，不做成浮层 —— 实测棋盘四周只有 3px（上方）/
+     34px（左右）的空隙，任何浮层都会盖住棋盘；而顶栏本来就写着「第 N 手」，
+     题号跟它是同一类信息，凑在一起最自然，还不占额外地方。
+
+   一份题集会把多道题串在一个 SGF 里，用 `zz` 标记分界（实测抽样 3000 份里 2.97% 的文件有，
+   全库 21433 份里 538 份）。我们**只显示位置，不做切换**：
+   「跳到第 3 题」是另一个功能（要改手数范围、改引擎请求、改历史），
+   做一半只会让人以为能点、点了没反应。 */
+function quizPos() {
+  const seps = state.quizTips || [];
+  if (seps.length < 1) return null;
+  const at = state.viewAt;
+  let n = 1;
+  for (const s of seps) if (at >= s) n++;          /* 分界那一手就归下一题（>= 不是 >） */
+  return { n, total: seps.length + 1 };
+}
+/* 顶栏里用的一段文字；不是题集就返回空串 */
+function quizTxt() {
+  if (state.noGame) return '';
+  const q = quizPos();
+  if (!q || q.total < 2) return '';
+  return ` · ${q.total === 2 ? '第 ' + q.n + ' 题（共 2 题）' : '第 ' + q.n + ' 题 / 共 ' + q.total + ' 题'}`;
+}
 
 function renderCommentBox() {
   const box = $('cbox');
