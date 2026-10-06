@@ -64,9 +64,19 @@ const out = await js(`(async function(){
   const five = ['set-katago','set-analyzeWeight','set-playWeight','set-coachServer','set-coachWeight'];
   R['④ 五条路径都在'] = five.every(id => document.getElementById(id)) ? '✓' : ('★ 缺：' + five.filter(id => !document.getElementById(id)));
   const groups = document.querySelectorAll('.setgroup');
-  R['④ 分组'] = groups.length === 2
-    ? ('✓ 2 组：' + [...groups].map(g => g.querySelector('h3').textContent.trim().replace(/\\s+/g,' ')).join(' ｜ '))
-    : ('★ ' + groups.length + ' 组');
+  /* 现在是 3 组：KataGo / LoGos / 数据（2026-10-05 加了「棋谱库文件夹」那一组）。
+     这条断言原来写死 2 组，加组之后一直报 ★ —— 是测试过期，不是产品问题。
+     ⚠️ 这里别用正则压空白：本文件是模板字符串，反斜杠 s 的反斜杠会被 JS 先吃掉
+     （同一条坑今天踩过第二次了），改用 split/join。
+     ⚠️ 注释里也**不能写反引号** —— 它会把模板字符串提前截断（刚踩过，报的是
+     「missing ) after argument list」，位置指向模板开头，很难联想）。 */
+  const squash = t => String(t || '').trim().split(String.fromCharCode(10)).join(' ').split(String.fromCharCode(13)).join(' ');
+  R['④ 分组'] = groups.length === 3
+    ? ('✓ 3 组：' + [...groups].map(g => {
+        const h = g.querySelector('h3, .setgroup-h');
+        return h ? squash(h.textContent) : '(无标题)';
+      }).join(' ｜ '))
+    : ('★ ' + groups.length + ' 组（期望 3：KataGo / LoGos / 数据）');
   const qh = [...document.querySelectorAll('.setgroup .qh')];
   R['④ 问号'] = qh.length === 2
     ? ('✓ 2 个，说明分别 ' + qh.map(q => (q.dataset.tip || '').length).join(' / ') + ' 字')

@@ -246,6 +246,10 @@ function launch(e) {
   if (e.proc) return;
   e.lastErr = null;
   e.paused = false;                // 重新拉起 = 取消暂停
+  /* ★ 清掉上一次的探针状态（2026-10-06）：不然重试的「总时限」会沿用上次的起点，
+     第二次加载可能一上来就被判超时。 */
+  if (e.probeTimer) { clearTimeout(e.probeTimer); e.probeTimer = null; }
+  e.probeStart = 0;
 
   e.weight = weightOf(e.key);      // ★ 每次启动现读 —— 设置里改了路径后重启就用新的
   const exe = exeOf(e);
@@ -362,10 +366,24 @@ function launch(e) {
    （不依赖日志文本匹配）。
    ⚠️ 必须检查 res.error：引擎若中途退出，pending 里的 promise 会被 resolve 成
    { error: '引擎已退出' }；旧代码不检查就当成「就绪」→ 界面显示就绪、
-   实际一调用就报「引擎未启动」（2026-10-03 踩过）。 */
-function probe(e) {
-  if (e.kind === 'llama') { probeCoach(e); return; }
+   实际一调用就报「引擎未启动」（2026-10-03 踩过）。
 
+   ★★ 探针失败为什么值得重试（2026-10-06 定的策略）：
+   一次探针的预算就是 analyze 的超时（90 秒），而模型加载慢的时候（机械盘、首次冷启、
+   GPU 被别的程序占着）**真的会超过 90 秒** —— 本机实测加载就要约 70 秒，离 90 秒只差一点。
+   原来失败就 `return`：进程还活着、`loading` 一直是 true、界面永远「加载中」，
+   而再点「加载」会被 `launch()` 开头的 `if (e.proc) return` 挡掉 ——
+   用户只能自己想到「先卸载再加载」才能救回来。
+   现在：只要进程还活着就**继续重试**，直到总时长 5 分钟；超过就明确报错、
+   并把进程停掉，让「加载」重新可用。
+   （5 分钟是很宽的余量：能跑起来的早就起来了；到这个点还答不了一次 2 visits 的空盘查询，
+     基本就是权重损坏 / 显存不足 / 引擎装错 —— 继续等下去没有意义。） */
+const PROBE_DEADLINE_MS = 5 * 60 * 1000;
+function probe(e, t0) {
+  if (e.kind === 'llama') { probeCoach(e, t0); return; }
+
+  const started = t0 || Date.now();
+  if (!e.probeStart) e.probeStart = started;
   console.log('[engine:' + e.key + '] 模型加载中（首次约 10~20 秒）...');
   const req = { moves: [], initialStones: [], rules: 'chinese', komi: 7.5, size: 19, maxVisits: 2 };
   if (e.key === 'play') req.profile = PLAY_DEFAULT_PROFILE;   // human 权重必须带档位
@@ -373,6 +391,20 @@ function probe(e) {
     .then(res => {
       if (!res || res.error || !res.root) {
         console.warn('[engine:' + e.key + '] 探针未通过：' + ((res && res.error) || '无有效响应'));
+        if (!e.proc || quitting) return;                 // 进程没了 / 正在退出：交给 exit 那边收尾
+        if (Date.now() - e.probeStart < PROBE_DEADLINE_MS) {
+          e.probeTimer = setTimeout(() => {
+            e.probeTimer = null;
+            if (e.proc && !quitting) probe(e, e.probeStart);
+          }, 3000);                                      // 给它 3 秒再试，别把引擎问烦
+          return;
+        }
+        /* 总时限到了还没起来 → 明确报错并停掉进程（否则「加载」点不动） */
+        e.lastErr = '模型加载超时（超过 5 分钟还没就绪）—— 点「加载」可重试；'
+          + '若反复如此，检查权重文件是否完整（大小对不对）';
+        e.loading = false;
+        console.warn('[engine:' + e.key + '] ' + e.lastErr);
+        stopEngine(e, () => setStatus());
         return;
       }
       e.restarts = 0;        // 跑起来了 → 重启额度重置（以后再崩还能自动救）
@@ -403,8 +435,10 @@ function coachHealth() {
 
 function probeCoach(e) {
   console.log('[engine:coach] 讲解模型加载中（4.4GB 进显存，首次约 10~30 秒）...');
-  const deadline = Date.now() + 180000;
+  if (!e.probeStart) e.probeStart = Date.now();
+  const COACH_DEADLINE_MS = 3 * 60 * 1000;
   const tick = async () => {
+    e.probeTimer = null;
     if (!e.proc || e.proc.exitCode !== null) return;      // 进程没了就别再轮（exit 那边会收尾）
     const ok = await coachHealth();
     if (ok) {
@@ -417,15 +451,21 @@ function probeCoach(e) {
       }
       return;
     }
-    if (Date.now() > deadline) {
-      e.lastErr = '讲解模型加载超时（3 分钟）';
+    if (Date.now() - e.probeStart > COACH_DEADLINE_MS) {
+      /* ★ 超时后**把进程停掉**（2026-10-06 定的策略，与 KataGo 那条一致）：
+         原来的写法只置了 lastErr 和 loading=false，进程还活着 ——
+         而 `launch()` 开头是 `if (e.proc) return`，于是用户点「加载」**毫无反应**，
+         必须自己想到「先卸载」。停掉之后「加载」立刻可用，报错也说明了原因。 */
+      e.lastErr = '讲解模型加载超时（3 分钟还没就绪）—— 点「加载」可重试；'
+        + '若反复如此，检查 LoGos 的 .gguf 文件是否完整（约 4.4GB）';
       e.loading = false;
-      setStatus();
+      console.warn('[engine:coach] ' + e.lastErr);
+      stopEngine(e, () => setStatus());
       return;
     }
-    setTimeout(tick, 1000);
+    e.probeTimer = setTimeout(tick, 1000);
   };
-  setTimeout(tick, 1200);        // 先给它一点启动时间，别一上来就轮
+  e.probeTimer = setTimeout(tick, 1200);   // 先给它一点启动时间，别一上来就轮
 }
 
 function shutdown() {
@@ -466,6 +506,11 @@ function stopEngine(e, cb) {
   /* ★ 取消「意外退出自动重启」——用户点卸载 = 明确不要它了。
      少了这一句：崩溃后 3 秒内点卸载，引擎会自己又起来（审查发现）。 */
   if (e.restartTimer) { clearTimeout(e.restartTimer); e.restartTimer = null; }
+  /* ★ 探针的轮询/重试定时器也要清（2026-10-06）：不清的话，卸载之后它还会再探一次，
+     而那时 e.proc 已空 → 探针会走到「总时限到了」那条分支、报一句莫名其妙的超时错误。
+     顺带把 probeStart 归零，下次「加载」重新计时。 */
+  if (e.probeTimer) { clearTimeout(e.probeTimer); e.probeTimer = null; }
+  e.probeStart = 0;
   if (!p) { cb(); return; }
   e.manualStop = true;            // 让 exit 处理跳过程序化的「意外退出自动重启」
   let done = false;

@@ -1607,6 +1607,9 @@ const RANK_BY_LOSS = [
 const estRank = avg => (avg === null ? '—' : (RANK_BY_LOSS.find(r => avg < r[0]) || RANK_BY_LOSS[RANK_BY_LOSS.length - 1])[1]);
 
 let reviewBusy = false;
+/* 复盘的「进门取号」：每次点「开始复盘」同步 +1。
+   用来挡住「判定与上锁之间那几毫秒内连点两次」的双开 —— 见 runReview 里的说明。 */
+let reviewSeq = 0;
 
 /* KataGo 的 scoreLead 是「**当前走棋方**视角」（跟 ownership / winrate 同一套视角规则），
    所以要比较两回合必须统一换算。这里统一成「黑方领先多少目」。 */
@@ -1672,12 +1675,22 @@ function buildReview(nMoves, turns) {
   /* 与 AI 首选重合：turns[t].moves[0] 是引擎给该回合的第一推荐，
      turns[t].actualMove 是实际下的那手（主进程从请求的 moves 里取）。黑白分开记。 */
   const hit = { b: 0, w: 0 }, known = { b: 0, w: 0 };
+  /* ★ 认「AI 首选」要用 `order === 0`，**别假定 moveInfos[0] 就是首选**
+     （2026-10-06 审查发现）：引擎的 moveInfos 是按**访问次数**排的，不保证第一项是 order 0；
+     而主进程只透传前 8 条。本文件别处（pickAIMove）早就是
+     `find(m => m.order === 0) || infos[0]` 的写法，这里当时没跟上 ——
+     判错会让报告里「与 AI 首选一致 N/M」和失误清单的「AI 想下 X」指错点。 */
+  const firstMove = info => {
+    const ms = (info && info.moves) || [];
+    const f = ms.find(m => m.order === 0);
+    return f ? f.move : (ms[0] ? ms[0].move : null);
+  };
   for (let t = 0; t < nMoves; t++) {
     const info = turns[t];
     if (!info || !info.actualMove || !info.moves || !info.moves.length) continue;
     const sd = sideOf(t);
     known[sd]++;
-    if (info.moves[0].move === info.actualMove) hit[sd]++;
+    if (firstMove(info) === info.actualMove) hit[sd]++;
   }
 
   /* 每方一组指标（平均目损 / 失误档位 / 分段 / 与 AI 重合） */
@@ -1719,7 +1732,7 @@ function buildReview(nMoves, turns) {
   for (let t = 0; t < nMoves; t++) {
     const v = losses[t];
     if (typeof v !== 'number' || v < 3) continue;
-    const best = (turns[t] && turns[t].moves && turns[t].moves[0]) ? turns[t].moves[0].move : null;
+    const best = firstMove(turns[t]);   // 同上：用 order===0 认首选，别假定 moves[0]
     blunders[sideOf(t)].push({ t, loss: v, best });
   }
   blunders.b.sort((x, y) => y.loss - x.loss);
@@ -1981,7 +1994,16 @@ async function openSavedReview(name, note) {
 async function runReview(name) {
   if (reviewBusy) { showReviewAgain(); return; }
   if (!engineReady) { needEngine('analyze', '复盘'); return; }
+  /* ★ 进门取号（2026-10-06 审查发现 + 定的修法）。
+     原来判定与上锁之间隔着一个 await（读棋谱文件），那几毫秒里再点一次
+     「开始复盘」会**真的开第二遍**（两份整盘请求、还会互相覆盖同一份报告文件）。
+     修法不是「提前上锁」—— reviewBusy 是给后台分析当闸门用的，早置会让分析多停一段，
+     而且提前上锁意味着每条提前 return 都要补复位，**漏一处就锁死**（比偶发双开严重得多）。
+     改成同步取号 + 在一次 await 之后校验：连点时**先来的那个主动退出**，
+     最坏情况也只是退回原来的行为，不会锁死、不会多做一份。 */
+  const myRun = ++reviewSeq;
   const rd = await window.api.records.read(name);
+  if (myRun !== reviewSeq) return;               // 期间又点了一次 → 这次作废，交给后来者
   if (!rd || rd.error) { flash('读取失败：' + ((rd && rd.error) || '未知')); return; }
   const p = parseSGF(rd.text);
   if (!p || !p.ok || !p.moves.length) { flash('这份棋谱里没有手顺，复盘不了'); return; }
@@ -4815,6 +4837,11 @@ async function runAnalysisExplain() {
     const ask = () => coachAsk(coachPrompt(before, boardAt(at - 1), m.color, best.move), 320, typer);
     let r = await ask();
     if (!r) return;
+    /* ★ 被取消时 main.js 会把**已收到的半截文本**带 `aborted: true` 回来
+       （unload 引擎、或这条请求被后一条取代时会走到）。这时：不重试、不入库 ——
+       半截文本有可能「够长 + 前 60 字有句号」而被当成完整讲解存进
+       `.coach.json`，之后永不重讲（2026-10-06 审查发现：aborted 这个标记一直没人看）。 */
+    if (r.aborted) { typer.finish('（已取消）'); return; }
     let txt = coachTextReady(r.text, best.move, m.color);
     /* 太短 / 第一句没说完 → 重来一次；两次里挑能用的（都好就取长的）。 */
     if (!r.error && !coachUsable(txt)) {
@@ -4908,6 +4935,13 @@ async function loadCoachForRecord(name) {
 
 async function runBatchCoach() {
   if (state.coach.batch) { flash('全盘讲解正在跑 —— 想停就点进度条右边的「停止」'); return; }
+  /* ★ 反过来也要挡（2026-10-06 审查发现）：单条讲解（分析讲解 / 选点讲解）正在跑时，
+     直接点「全盘讲解」会把在跑的那条**静默掐掉** —— 两条共用 coachSeq 通道，
+     原来只有「批量挡单条」这一半（批量期间按钮被 disabled），反向漏了。 */
+  if (state.coach.busy.explain >= 0 || state.coach.busy.pick >= 0) {
+    flash('正在讲别的（分析讲解 / 选点讲解）—— 等它讲完再点全盘讲解');
+    return;
+  }
   if (!state.fromRecord || !state.recName) { flash('先打开一份棋谱，再来做全盘讲解'); return; }
   if (needEngine('coach', '全盘讲解')) return;
   if (needEngine('analyze', '全盘讲解')) return;
@@ -4943,6 +4977,13 @@ async function runBatchCoach() {
       flash('整盘分析失败：' + ((res && res.error) || '引擎没给出结果'));
       return;
     }
+    /* ★ 整盘分析**超时**时 main.js 会带 `incomplete: true` 交回「已经算到的那些回合」
+       （见 analyze 的超时兜底）。这种情况只能讲算到的部分，而且要如实说明 ——
+       原来只看 `turns.length >= 2` 就照跑到底，末尾还报「讲了 N 手」，
+       实际有几手因为没数据被跳过（2026-10-06 审查发现）。 */
+    if (res.incomplete) {
+      flash('KataGo 整盘没算完（超时）—— 这次只讲算到的部分，回头再点一次会接着讲');
+    }
     const turns = res.turns;
     /* 顺手把胜率走势填满（引擎给的是「轮到谁走」视角，要换算成黑方视角）——
        这样手数列表的「涨跌」和走势图也一起活了，讲解里说的胜率能跟它们对上。 */
@@ -4960,7 +5001,9 @@ async function runBatchCoach() {
 
     /* ---------- ② LoGos：逐手讲（讲过的跳过，所以能接着上次继续） ---------- */
     const todo = [];
-    for (let at = 1; at <= n; at++) if (!state.coach.explain[at]) todo.push(at);
+    /* ★ 上限取 min(手数, 已算到的回合数) —— 超时的情况只讲有数据的那些手，
+       免得后面每一手都走到「没算出候选点」、空转一遍还被算进完成数（见上面的 incomplete 判断）。 */
+    for (let at = 1; at <= Math.min(n, turns.length); at++) if (!state.coach.explain[at]) todo.push(at);
     if (!todo.length) { flash('这份棋谱已经全部讲过（' + n + ' 手）'); return; }
 
     let k = 0;
@@ -4991,6 +5034,12 @@ async function runBatchCoach() {
         const ask = () => coachAsk(coachPrompt(before, boardAt(at - 1), m.color, best.move), 320);
         let r = await ask();
         if (!r) break;                          // 被别的请求取代 → 收工
+        /* ★ 用户点了「停止」（或换棋谱）→ main.js 把半截文本带 `aborted: true` 回来。
+           这时**这一手不要**：既不该重试（停了还在讲、还要再等几秒），
+           也不该入库 —— 半截文本可能「够长 + 有句号」而被当完整讲解存进 .coach.json，
+           之后永不重讲。收工前把 batchStop 置上，下面那句提示也会说「已停」。
+           （2026-10-06 审查发现：aborted 这个标记一直没人看。） */
+        if (r.aborted) { batchStop = true; break; }
         let txt = coachTextReady(r.text, best.move, m.color);
         /* 太短 / 第一句没说完 → 重来一次；两次里挑能用的（都好就取长的）。 */
         if (!r.error && !coachUsable(txt)) {
