@@ -50,6 +50,31 @@ GH="/c/Program Files/GitHub CLI/gh.exe"
 export ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
 export ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 
+# ============================================================
+# ★ 2026-10-06 深夜补：本脚本原来假设 PATH 里已经有 npm / git ——
+#   在 DSH（本机新用的开发环境）里**不成立**，三处全断：
+#     · npm 没装（node 是 .workbuddy 下的绿色版）→ `npm run dist` 直接失败
+#     · git 不在 PATH（在 .workbuddy 的 PortableGit 里）
+#     · bash 也不在（同前）
+#   于是「打包那步失败、而 commit 照样成功」的坑会再来一次 ——
+#   所以这里显式把三样都定位好，不依赖外部 PATH。
+# ============================================================
+PORTABLE_GIT="C:/Users/rapac/.workbuddy/binaries/PortableGit/versions/1.2.0"
+if [ -x "$PORTABLE_GIT/cmd/git.exe" ]; then
+  export PATH="$PORTABLE_GIT/cmd:$PATH"
+  echo "  已把 PortableGit 加进 PATH（$(git --version 2>/dev/null || echo 取不到版本)）"
+else
+  echo "  ★ 找不到 PortableGit 的 git.exe —— 后面的提交/推送会失败：$PORTABLE_GIT"
+fi
+# npm 不存在时直接调 electron-builder 的 CLI（等价于 `npm run dist` = `electron-builder --win`）
+EB_CLI="node_modules/electron-builder/out/cli/cli.js"
+if command -v npm >/dev/null 2>&1; then
+  BUILD_CMD="npm run dist"
+else
+  BUILD_CMD="\"$N\" $EB_CLI --win"
+  echo "  没有 npm → 直接用 electron-builder CLI 打包（等价于 npm run dist）"
+fi
+
 echo "=== 1/5 语法与静态检查 ==="
 for f in main.js preload.js renderer/app.js; do "$N" --check "$f"; done
 echo "  JS 语法 OK"
@@ -103,7 +128,7 @@ fi
 echo
 echo "=== 2/5 打包 ==="
 rm -rf dist/win-unpacked dist/*.exe dist/*.zip
-npm run dist 2>&1 | grep -E "building|packaging|error|Error" | tail -4
+eval "$BUILD_CMD" 2>&1 | grep -E "building|packaging|error|Error" | tail -4
 
 # ---- 2b/5 同步到「正式版」目录 ----------------------------------------
 # ★ 为什么要这一步（2026-10-06 用户定的分工）：
@@ -163,8 +188,16 @@ if [ -d dist/win-unpacked ]; then
   echo "    保留：settings.json（引擎路径）、records/（你的棋谱）"
   # ★ 立刻删掉中间产物：它和正式版内容完全相同，留着白占 376MB，
   #   而且用户可能误点那个 exe（下次打包它会消失 → 快捷方式突然失效）。
-  rm -rf dist/win-unpacked
-  echo "    已删除中间产物 dist\\win-unpacked（省 376MB，避免误点）"
+  #   ★ 2026-10-06 深夜例外：在 DSH 环境下**保留**它 —— 用户要能随时
+  #     「看用户下载解压后的版本长什么样」，不想每次都去开正式版目录。
+  #     要恢复"省 376MB"的老行为：设 KEEP_UNPACKED=0 再跑本脚本。
+  if [ "${KEEP_UNPACKED:-1}" = "0" ]; then
+    rm -rf dist/win-unpacked
+    echo "    已删除中间产物 dist\\win-unpacked（省 376MB，避免误点）"
+  else
+    echo "    已保留 dist\\win-unpacked（用户要能随时对比"解压后是什么样"；"
+    echo "      想省 376MB 就设 KEEP_UNPACKED=0）"
+  fi
   # 快捷方式要重建才指向新位置（指向旧的 exe 路径不会自动更新）
   rm -f "$USERPROFILE/Desktop/玄清围弈.lnk" 2>/dev/null || true
 else

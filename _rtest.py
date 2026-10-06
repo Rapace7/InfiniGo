@@ -7,6 +7,19 @@
 import subprocess, time, os, ctypes, sys, struct, zlib
 from ctypes import wintypes
 
+# ★ 2026-10-06 深夜补：Windows 上 Python 的 stdout 默认是 GBK（cp936），
+#   而测试脚本的输出里带 ✓ / ★ / 中文 —— 一旦有 GBK 装不下的字符，
+#   **print 本身就抛 UnicodeEncodeError**，整个测试挂掉、前面的结果全看不到。
+#   实测：`UnicodeEncodeError: 'gbk' codec can't encode character '\u2713'`。
+#   所以这里显式把标准输出改成 UTF-8（errors='replace' 兜底，绝不因为一个字符中断验证）。
+#   注意：这是**工具**的问题，不是被测代码的问题 —— 修在这里，别去改测试脚本的符号。
+for _s in ('stdout', 'stderr'):
+    try:
+        getattr(sys, _s).reconfigure(encoding='utf-8', errors='replace')
+    except Exception:
+        pass
+os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
+
 # ★ 项目目录**从本文件位置推导**，不写死盘符 ——
 #   否则把文件夹改名（GoMate → RapaceGo）后整套测试脚本就全废了。
 APP = os.path.dirname(os.path.abspath(__file__))

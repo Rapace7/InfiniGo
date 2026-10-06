@@ -90,6 +90,14 @@ const state = {
   /* 棋谱自带的解说词（SGF 的 C[]，只取主分支）：下标 = 第几手（0 = 开局前）。
      只在「打谱」（state.fromRecord）时有内容；新开局的棋谱没有解说词。 */
   sgfComments: [],
+  /* 棋谱根节点的说明文字（题集出处、这是第几图、谁整理的），**不属于任何一手**。
+     ★ 为什么单独一个字段：原来它和「第 0 手」共用 comments[0] 这个键，
+       而根节点后面通常还跟着 `;B[xx]` 那一手（它的键也是 0）→ 后者把前者覆盖掉，
+       于是这段说明整段读不出来（实测抽样 300 份真实棋谱：18 份的根节点说明就是这么丢的，
+       而在被 tokenizer 劈错的文件里丢得更彻底）。
+     ★ 显示位置：右下角「解说词」框在「（开局前）」那一档里显示它 ——
+       不另开一块界面（用户定的：软件不做做题功能，也不必多一张卡）。 */
+  rootComment: '',
   /* 这份棋谱里「换了一道题」的位置（手数）。SGF 的题集用 `zz` 分隔，
      抽样 3000 份真实棋谱：2.97% 的文件含它。只有一条的显示提示，两条以上才有意义。 */
   quizTips: [],
@@ -1223,12 +1231,44 @@ function parseSGF(text) {
     i++;
     const props = [];
     for (;;) {
-      while (i < s.length && /\s/.test(s[i])) i++;       // 标识前的空白
+      /* ★★ 2026-10-06 修正（用户报「棋谱说明（根节点那段）读不出来」）。
+         原写法是：
+               while (i < s.length && /\s/.test(s[i])) i++;   // 跳过标识前的空白
+               let id = '';
+               while (/[A-Za-z]/.test(s[i])) { id += s[i]; i++; }
+               if (!id) break;                                // ← 这里就错了
+         `/\s/` 把**换行**也算进去，而 SGF 的属性值允许跨行 ——
+         真实棋谱大量这么写（题集的摆子几十个点分两三行、解说词本身也是多行）：
+               AB[qh]…[im]<CRLF>[kn]…[ch]AW[qf]…C[手筋辞典…<CRLF>…第55图 黑先]
+         于是「跳过空白后正好遇到 `[`（下一个值）」被误判成「这个节点读完了」，
+         节点被从中间劈开：
+           ① 这个属性剩下的值归到了下一个节点 → AB/AW 摆子点数变少（初始局面就是错的）；
+           ② 同一节点后面的属性整组丢失 —— 最常见的就是 `C`（棋谱说明）
+              和 `AW` 一起丢，这就是「根节点那段说明读不出来」的真因。
+         实测抽样 300 份真实棋谱：**71 份（23.7%）被劈错**，其中一份的节点数
+         从正确的 8 个虚增到 57 个。
+         修法：只有「跳过空白后既不是标识、也不是值的开头」才认为节点结束。 */
+      let j = i;
+      while (j < s.length && /\s/.test(s[j])) j++;        // 标识前的空白（含换行）
       let id = '';
-      while (i < s.length && /[A-Za-z]/.test(s[i])) { id += s[i]; i++; }
-      if (!id) break;                                    // 这个节点读完了
+      while (j < s.length && /[A-Za-z]/.test(s[j])) { id += s[j]; j++; }
+      if (!id) {
+        if (j < s.length && s[j] === '[') i = j;          // 值接着写 → 本属性还没完
+        else break;                                      // 这个节点读完了
+      } else {
+        i = j;
+      }
       const vals = [], valAt = [];
-      while (i < s.length && s[i] === '[') {
+      /* ★ 另一个同类修正：**值之间**也可能夹着换行
+         （`AW[fc][fb]<CRLF>[fa][ed]…` 这种写法很常见）。
+         原循环条件 `while (s[i] === '[')` 遇到换行就退出，于是这个属性
+         只读到换行前的那几个值，剩下的全被劈走 —— 摆子少、解说词只剩第一行。
+         现在每读完一个值先跳过空白，再看有没有下一个值。 */
+      for (;;) {
+        let k = i;
+        while (k < s.length && /\s/.test(s[k])) k++;
+        if (k >= s.length || s[k] !== '[') break;
+        i = k;
         i++;
         valAt.push(i);                                   // 值正文起点（'[' 之后）
         let v = '';
@@ -1320,6 +1360,10 @@ function parseSGF(text) {
   }
 
   const moves = [], comments = [], mainLine = [], seps = [];
+  /* 根节点（棋谱开头那个节点）的说明文字 —— 单独存，不占「第 0 手」那个键。
+     实测抽样 300 份真实棋谱：116 份的根节点带 C（38%），
+     其中一部分以前**整段读不出来**（被后面第 0 手的 C、或被 tokenizer 劈错吃掉）。 */
+  let rootComment = '';
   for (const nd of nodes) {
     /* 先看这个节点是不是一手棋（一次扫全部 props，所以 C 的位置无关） */
     let movesHere = [];
@@ -1348,15 +1392,34 @@ function parseSGF(text) {
       movesHere.push({ color, x, y });
     }
     moves.push(...movesHere);
-    /* 再收这个节点上的解说词，并记下它在**原文里的位置**（编辑时要用它精确落刀） */
+    /* 再收这个节点上的解说词，并记下它在**原文里的位置**（编辑时要用它精确落刀）
+       ★ 根节点说明的归属：**主分支上第一个没有落子的节点**（它不属于任何一手）。
+         为什么这么定（实测 300 份真实棋谱校出来的，三种形态都得覆盖）：
+           a) 死活题集：第一个节点就是根节点，摆子 AB/AW 和说明 C 都在这上面
+              （`(;AB[…]AW[…]C[手筋辞典…第55图 黑先]…`）；
+           b) 古谱（当湖十局那类）：第一个节点只有 FF/PB/RE 这些元数据，
+              摆子写在第二个节点上 —— 但说明也在第一个节点上；
+           c) 目录页 / 只有元数据的棋谱：第一个节点没有摆子，
+              只有一句 C（实测 `00_mulu.sgf` 是《兼山堂弈谱》目录、`Shusai-092.sgf`
+              是「Moves after 128 not recorded」）—— 这两种原来**整段读不出来**。
+         所以判据只能是「第一个没有落子的节点」，不能加「必须带摆子」这个条件。 */
+    const isRoot = movesHere.length === 0 && !rootComment;
     let cSpan = null;
     for (const p of nd.props) {
       if (p.id !== 'C' || !p.vals.length) continue;
       if (p.valAt && p.valAt.length) cSpan = [p.valAt[0], p.valAt[0] + p.vals[0].length];
       const txt = unsgf(p.vals[0]);
-      if (txt.trim()) comments[movesHere.length ? moves.length : 0] = txt;
+      if (!txt.trim()) continue;
+      if (isRoot) rootComment = txt;
+      else comments[movesHere.length ? moves.length : 0] = txt;
     }
-    mainLine.push({ at: nd.at, end: nd.end, moveIdx: movesHere.length ? moves.length : 0, cSpan });
+    mainLine.push({
+      at: nd.at, end: nd.end,
+      /* isRoot：这一条代表「根节点那段说明」。保存根节点说明时用它找落刀位置。 */
+      isRoot: isRoot,
+      moveIdx: movesHere.length ? moves.length : 0,
+      cSpan,
+    });
   }
   /* 盘面大小：上面已按 nodes 里的 SZ 算过 boardSize，这里直接用同一个值，
      **不重新解析** —— 两份口径（一个不限范围、一个限 2~52）万一哪天不一致，
@@ -1376,7 +1439,7 @@ function parseSGF(text) {
   const pb = firstProp('PB'), pw = firstProp('PW');
   return {
     ok: moves.length > 0 || ab.length > 0, size, komi, rules, ab, aw, moves, pb, pw,
-    comments, mainLine,
+    comments, rootComment, mainLine,
     /* 「换了一道题」的位置（题集里 `zz` 分隔标记所在的手数）。
        我们**不做分支树、也不做多题分段显示**（用户定的：只显示主干），
        但保留这个信息 —— 将来若要做「第 3 题」这类提示，不用再改解析器。 */
@@ -1384,18 +1447,45 @@ function parseSGF(text) {
   };
 }
 
-/* ---- 把「第 at 手」的解说词写回 SGF 文本（2026-10-06 新增） ----
+/* ---------- 换行符归一（2026-10-06）----------
+   ★ 用户报的现象：「显示没空行 → 点编辑有空行 → 保存后有空行」。
+   根因：真实棋谱里换行**大多写的是 CRLF**（实测抽样 2000 份，根节点解说词里
+   251 份含 CRLF）。而 HTML 的 <textarea> 有一条规范行为：
+   **通过 .value 读回来时，CRLF 会被规范化成 LF**。于是：
+     显示（div + pre-wrap）   拿到原文的 CRLF
+     编辑（textarea.value） 拿到规范化后的 LF
+   写回时把 ta.value 原样塞回 SGF —— 那处 CRLF 就被换成了 LF。
+   同一个文件里 LF 与别处的 CRLF 混排，换个查看器打开，空行就冒出来了。
+
+   修：写回前统一成 CRLF（Windows 上 SGF 的通行写法，也是原文件的口径）。
+   ★ 顺序要紧：必须**先合并 CRLF 再统一转回 CRLF** ——
+     少这一步会变成 CRCRLF，那才是真的多出一个空行。 */
+function nlForSGF(t) {
+  const CR = String.fromCharCode(13), LF = String.fromCharCode(10);
+  return String(t == null ? '' : t)
+    .split(CR + LF).join(LF)      // CRLF → LF
+    .split(CR).join(LF)          // 落单的 CR → LF
+    .split(LF).join(CR + LF);    // LF → CRLF
+}
+
+/* ---- 把某一手（或根节点）的解说词写回 SGF 文本（2026-10-06） ----
    做法：**只在原文里替换/插入那一个节点上的 C[]**，其余字符一个都不动。
    为什么必须这么做（而不是用 buildSGF 重新生成一份）：
    我们的导出只写主分支、不认识变体/别的属性 —— 拿它覆盖用户下载来的棋谱，
    会把变体、引擎信息、别的注释**全部抹掉**。所以这里把文件当"文本"处理，
    靠 parseSGF 交出来的节点位置精确落刀。
+   at：手数；at === -1 表示**根节点那段说明**（它不属于任何一手）。
    返回 { ok, text } 或 { error }。 */
 function patchSGFComment(text, at, newText) {
   const p = parseSGF(text);
-  const ent = (p.mainLine || []).find(x => x.moveIdx === at);
-  if (!ent) return { error: '这份棋谱里找不到第 ' + at + ' 手' };
-  const esc = String(newText || '').replace(/\\/g, '\\\\').replace(/\]/g, '\\]');
+  const ent = at === -1
+    ? (p.mainLine || []).find(x => x.isRoot)
+    : (p.mainLine || []).find(x => !x.isRoot && x.moveIdx === at);
+  if (!ent) {
+    return { error: at === -1 ? '这份棋谱的根节点上没有说明文字' : '这份棋谱里找不到第 ' + at + ' 手' };
+  }
+  /* ★ 写回前把换行统一成 CRLF（见上面 nlForSGF 的注释） */
+  const esc = nlForSGF(newText).replace(/\\/g, '\\\\').replace(/\]/g, '\\]');
   if (ent.cSpan) {
     if (!newText) {
       /* 清空 → 把整个 C[..] 删掉（'C[' 在值的左两格：标识 1 字符 + '['） */
@@ -1436,6 +1526,9 @@ function applyRecord(rec, srcName) {
   /* ★ 棋谱自带的解说词（SGF 的 C[]，主分支逐手）—— 右下角那个「解说词」框就是显示它。
      没有就是空数组（多数自己导出的棋谱没有）。 */
   state.sgfComments = Array.isArray(rec.comments) ? rec.comments.slice() : [];
+  /* 棋谱**根节点**的说明文字（题集出处、第几图、谁整理的）——
+     单独存，不跟「第 0 手」抢键。它在解说词框的「（开局前）」那一档显示。 */
+  state.rootComment = String(rec.rootComment || '');
   /* 一份题集里串了多道题时的分界位置（`zz` 分隔标记所在的手数）——
      只用来显示「第 N 题 / 共 M 题」，**不做切换**。 */
   state.quizTips = Array.isArray(rec.seps) ? rec.seps.slice() : [];
@@ -2523,6 +2616,7 @@ function applyNewGame(idle) {
   N = settings.size;
   state.fromRecord = false;     // 新开的局不是打谱
   state.sgfComments = [];       // 新开局没有「棋谱自带的解说词」
+  state.rootComment = '';       // 也没有「棋谱说明」（那是某份棋谱根节点上的文字）
   state.quizTips = [];           // 也不是题集，没有「第几题」
   state.recName = '';           // ★ 也不是某份棋谱了 —— 讲解没有存放处（全盘讲解按钮会收起）
   clearCoachPanels();           // 讲解只在对局期间保留（用户要求：开新局就清）
@@ -4188,16 +4282,21 @@ function renderCommentBox() {
 
   const at = state.viewAt;
   const list = state.sgfComments || [];
+  /* ★ 棋谱说明（根节点那段文字）：在「开局前」这一档显示。
+     它不属于任何一手 —— 实测抽样 300 份真实棋谱里 116 份（38%）有这段。
+     以前它和「第 0 手」共用 comments[0] 这个键，被后面那一手覆盖掉 → 整段读不出来。 */
+  const rootTxt = at === 0 ? String(state.rootComment || '') : '';
+  const txt = rootTxt || (list[at] || '');
   const canEdit = !!state.fromRecord && !!state.recName;
   const btn = $('cbox-edit');
   btn.disabled = !canEdit;
   btn.title = canEdit
-    ? '改这一手的解说词（存回这份棋谱文件；第一次改会先留一份 .bak 备份）'
-    : '只有「打开棋谱」时才能改解说词';
+    ? (rootTxt ? '改这段棋谱说明（存回这份棋谱文件；第一次改会先留一份 .bak 备份）'
+               : '改这一手的解说词（存回这份棋谱文件；第一次改会先留一份 .bak 备份）')
+    : (rootTxt ? '只有「打开棋谱」时才能改棋谱说明' : '只有「打开棋谱」时才能改解说词');
   $('cbox-at').textContent = state.noGame ? '（棋谱自带）'
-    : (at === 0 ? '（开局前）' : '（第 ' + at + ' 手）');
+    : (at === 0 ? (rootTxt ? '（开局前 · 棋谱说明）' : '（开局前）') : '（第 ' + at + ' 手）');
 
-  const txt = list[at] || '';
   if (txt) { box.textContent = txt; return; }
   const ph = document.createElement('div');
   ph.className = 'ph';
@@ -4232,9 +4331,18 @@ function editComment() {
   if (box.querySelector('textarea')) return;
   if (!state.fromRecord || !state.recName) { flash('只有打开棋谱时才能改解说词'); return; }
 
+  /* ★ 「开局前」这一档：如果这份棋谱有根节点说明，那这里改的就是**棋谱说明**
+     （它不属于任何一手，onclick 里会走 patchSGFComment(text, -1, …)）。 */
+  const isRoot = at === 0 && !!String(state.rootComment || '').trim();
+
   const ta = document.createElement('textarea');
-  ta.value = (state.sgfComments || [])[at] || '';
-  ta.placeholder = '写点这一手的解说…（留空 + 保存 = 删掉这一手的解说词）';
+  /* ★ 显示给用户的这份也统一成 CRLF 口径，跟磁盘上的文件一致 ——
+     以前这里是 `list[at]` 原样（文件里的 CRLF），而保存时 textarea 已经把它
+     规范成 LF 了，改一次就把文件里那处 CRLF 变成 LF。 */
+  ta.value = nlForSGF(isRoot ? state.rootComment : ((state.sgfComments || [])[at] || ''));
+  ta.placeholder = isRoot
+    ? '写点这段棋谱的说明…（例如出处、这是第几图、谁整理的；留空 + 保存 = 删掉这段）'
+    : '写点这一手的解说…（留空 + 保存 = 删掉这一手的解说词）';
   const bar = document.createElement('div');
   bar.style.cssText = 'display:flex;gap:6px;margin-top:6px;flex:none';
   const ok = document.createElement('button');
@@ -4259,7 +4367,7 @@ function editComment() {
   no.onclick = () => { exitCommentEdit(); renderCommentBox(); };
   ok.onclick = async () => {
     ok.disabled = true;
-    const r = await saveComment(at, ta.value.trim());
+    const r = await saveComment(at, ta.value.trim(), isRoot);
     if (r && r.error) {
       /* ★ 保存失败时**不能**把用户输入清掉（他还要改），
          但也不能把他锁死在编辑态里 —— 那正是原来的 bug。
@@ -4270,21 +4378,28 @@ function editComment() {
       return;
     }
     exitCommentEdit();
-    flash('解说词已存回棋谱（第 ' + at + ' 手）' + ((r && r.note) ? r.note : ''));
+    flash((isRoot ? '棋谱说明' : '解说词') + '已存回棋谱'
+      + (isRoot ? '' : '（第 ' + at + ' 手）') + ((r && r.note) ? r.note : ''));
     renderCommentBox();
   };
 }
 
-/* 把这一手的解说词写回棋谱文件 */
-async function saveComment(at, text) {
+/* 把这一手（或根节点说明）的解说词写回棋谱文件 */
+async function saveComment(at, text, isRoot) {
   const rd = await window.api.records.read(state.recName);
   if (!rd || rd.error) return { error: (rd && rd.error) || '读不到这份棋谱' };
-  const patched = patchSGFComment(rd.text, at, text);
+  const patched = patchSGFComment(rd.text, isRoot ? -1 : at, text);
   if (patched.error) return { error: patched.error };
   const w = await window.api.records.save(state.recName, patched.text);
   if (w && w.error) return { error: w.error };
-  if (!state.sgfComments) state.sgfComments = [];
-  if (text) state.sgfComments[at] = text; else delete state.sgfComments[at];
+  if (isRoot) {
+    /* 磁盘上写的是 CRLF 口径（见 nlForSGF），内存里这份也保持一致 */
+    state.rootComment = text ? nlForSGF(text) : '';
+  } else {
+    if (!state.sgfComments) state.sgfComments = [];
+    /* 存进内存的这份也用 CRLF 口径，跟磁盘上的保持一致 */
+    if (text) state.sgfComments[at] = nlForSGF(text); else delete state.sgfComments[at];
+  }
   /* ★ 如实回报两件用户该知道的事（2026-10-06）：
        ① 文件原本是 GBK 还是 UTF-8 —— 我们按原编码写回的，不改用户文件的口径；
        ② GBK 里没有的字（比如 emoji）会被写成 '?'，必须告诉用户，否则他
