@@ -1413,6 +1413,11 @@ function patchSGFComment(text, at, newText) {
    srcName = 棋谱库里的文件名（有它才能把讲解存回这份棋谱旁边） */
 function applyRecord(rec, srcName) {
   if (!rec || !rec.ok) { flash('这份棋谱读不出手顺（格式可能不常见）'); return; }
+  /* ★ 换棋谱时先退出解说词编辑态（2026-10-06）。
+     不退的话：① 框里还留着上一份棋谱的半截文字，render 又不敢重画
+     （「正在编辑就返回」那道守卫），于是那段文字会跟着走进新棋谱 ——
+     用户以为在改新棋谱，实际在改旧的。 */
+  exitCommentEdit();
   state.recName = String(srcName || '');
   settings.size = [9, 13, 19].indexOf(rec.size) >= 0 ? rec.size : 19;
   settings.rules = RULES[rec.rules] ? rec.rules : 'chinese';
@@ -4203,6 +4208,24 @@ function renderCommentBox() {
 }
 
 /* 点「编辑」→ 就地变成输入框（保存/取消） */
+/* 退出解说词编辑态。
+   ★ 这个函数是 2026-10-06 补的：原来「取消」按钮直接调 renderCommentBox()，
+     而 renderCommentBox 开头有一句「正在编辑（框里有 textarea）就别动它」
+     —— 于是取消时 textarea 还在框里，第一行就 return，**永远退不出去**。
+     翻手也救不了（syncUI 走的同一个函数）。用户报「点编辑后退不出去」，实测确认：
+     连点、翻手都不行；而保存失败那条路会保留输入，本意是让人改完再存，
+     结果也因为退不出去而变成卡死。
+
+     所以「退出」必须有自己的一条路：**先把 textarea 拆掉，再让 render 重画**。 */
+function exitCommentEdit() {
+  const box = $('cbox');
+  if (!box) return;
+  const ta = box.querySelector('textarea');
+  if (ta) box.removeChild(ta);
+  const bar = box.querySelector('button');      // 保存/取消那一行
+  if (bar && bar.parentElement === box) box.removeChild(bar.parentElement);
+}
+
 function editComment() {
   const box = $('cbox');
   const at = state.viewAt;
@@ -4221,12 +4244,32 @@ function editComment() {
   bar.append(ok, no);
   box.replaceChildren(ta, bar);
   ta.focus();
+  /* ★ Esc = 取消（用户习惯，也多一条出路）。
+     注意必须 preventDefault + stopPropagation：全局那个 keydown 监听器里
+     有一条「弹窗开着就一律不响应」，但解说词框不是弹窗，事件会穿过去 ——
+     不拦住的话按 Esc 还会顺手把别的东西关了。 */
+  ta.addEventListener('keydown', e => {
+    if (e.key !== 'Escape') return;
+    e.preventDefault();
+    e.stopPropagation();
+    exitCommentEdit();
+    renderCommentBox();
+  });
 
-  no.onclick = () => renderCommentBox();
+  no.onclick = () => { exitCommentEdit(); renderCommentBox(); };
   ok.onclick = async () => {
     ok.disabled = true;
     const r = await saveComment(at, ta.value.trim());
-    if (r && r.error) { flash('保存失败：' + r.error); ok.disabled = false; return; }
+    if (r && r.error) {
+      /* ★ 保存失败时**不能**把用户输入清掉（他还要改），
+         但也不能把他锁死在编辑态里 —— 那正是原来的 bug。
+         所以这里给个「放弃修改」的出路：换掉按钮含义、让他能直接走出去。 */
+      flash('保存失败：' + r.error + '（改完再点「保存」，或点「放弃修改」离开）');
+      no.textContent = '放弃修改';
+      ok.disabled = false;
+      return;
+    }
+    exitCommentEdit();
     flash('解说词已存回棋谱（第 ' + at + ' 手）' + ((r && r.note) ? r.note : ''));
     renderCommentBox();
   };
