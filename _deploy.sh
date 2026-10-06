@@ -159,10 +159,30 @@ echo "=== 5/5 发布 Release ==="
 #     第一位 = 只有 1.0.0（稳定到能推荐给任何人）
 VER=$(grep -o '"version": *"[^"]*"' package.json | head -1 | cut -d'"' -f4)
 TAG="v${VER}"
-# ★ 发布说明用一个**版本无关**的固定文件（下载 / 更新 / 引擎自备 / 硬件 / 说明）——
-#   这样每次发布不用重写一遍，也不会漏掉「怎么更新」这类必需信息。
-#   版本号本身由 --title 体现。
-NOTES="发布说明.md"
+# ---------- Release 说明 = 「版本专属」+「通用」两份拼起来 ----------
+# ★ 2026-10-06 修一个静默丢失的缺陷：
+#   原来**只用** 发布说明.md（版本无关的通用内容），而每次发布我详细写的
+#   「这一版改了什么」被**静默丢弃** —— 用户在 Release 页面永远看不到
+#   为什么该升级（v0.1.1 到 v0.1.7 全是这样）。
+#   现在：命令行第一个参数（本次发布说明）写在**最前面**（用户最先看到的），
+#   通用下载/更新/硬件说明接在后面。
+# ★ 为什么用临时文件而不是 --notes：--notes 传多行会被 shell 拆坏；
+#   而反引号在双引号里会被当命令执行（实测把 `zz` 那行吞了，还只打一行 stderr）。
+NOTES_COMMON="发布说明.md"
+NOTES_TMP="$(mktemp)"
+trap 'rm -f "$NOTES_TMP"' EXIT
+if [ -n "${1:-}" ]; then
+  printf '%s\n\n' "$1" > "$NOTES_TMP"
+fi
+if [ -f "$NOTES_COMMON" ]; then
+  cat "$NOTES_COMMON" >> "$NOTES_TMP"
+fi
+if [ ! -s "$NOTES_TMP" ]; then
+  echo "  ★ 没有说明可发（既没给本次说明，也没有 $NOTES_COMMON）—— 用 --generate-notes 兜底"
+  NOTES_TMP=""
+fi
+echo "  说明行数：$(wc -l < "$NOTES_TMP" 2>/dev/null || echo 0)"
+
 if "$GH" release view "$TAG" --repo Rapace7/RapaceGo > /dev/null 2>&1; then
   echo "  Release $TAG 已存在 → 覆盖资产 + 刷新说明"
   # ★ 只上传 zip：2026-10-06 起不再出 portable 单文件版（实测慢 400 倍且不便携）
@@ -171,20 +191,20 @@ if "$GH" release view "$TAG" --repo Rapace7/RapaceGo > /dev/null 2>&1; then
     echo "  上传 $f"
     "$GH" release upload "$TAG" "$f" --repo Rapace7/RapaceGo --clobber 2>&1 | tail -1
   done
-  if [ -f "$NOTES" ]; then
-    "$GH" release edit "$TAG" --repo Rapace7/RapaceGo --notes-file "$NOTES" > /dev/null 2>&1 \
-      && echo "  说明已刷新（$NOTES）"
+  if [ -n "$NOTES_TMP" ]; then
+    "$GH" release edit "$TAG" --repo Rapace7/RapaceGo --notes-file "$NOTES_TMP" > /dev/null 2>&1 \
+      && echo "  说明已刷新（含本次改动）"
   fi
   echo "  Release $TAG 已更新"
 else
-  # 新版本：自动建一个新的 Release（旧版本的留在列表里当历史，别覆盖 —— 
+  # 新版本：自动建一个新的 Release（旧版本的留在列表里当历史，别覆盖 ——
   # 用户靠「最上面那条」判断有没有更新，也要能看到自己那条）
   echo "  Release $TAG 不存在 → 新建"
-  if [ -f "$NOTES" ]; then
+  if [ -n "$NOTES_TMP" ]; then
     "$GH" release create "$TAG" dist/RapaceGo.zip \
       --repo Rapace7/RapaceGo \
       --title "$TAG" \
-      --notes-file "$NOTES" 2>&1 | tail -2
+      --notes-file "$NOTES_TMP" 2>&1 | tail -2
   else
     "$GH" release create "$TAG" dist/RapaceGo.zip \
       --repo Rapace7/RapaceGo --title "$TAG" --generate-notes 2>&1 | tail -2
