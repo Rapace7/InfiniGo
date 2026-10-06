@@ -1306,7 +1306,17 @@ function parseSGF(text) {
   /* SGF 值里的转义：`\]` → `]`、`\\` → `\`（换行是原文里的换行，保留） */
   const unsgf = v => String(v).replace(/\\([\s\S])/g, '$1');
 
-  const moves = [], comments = [], mainLine = [];
+  /* ★ 盘面大小必须**在遍历之前**读出来 —— 下面判越界坐标要用它
+     （最典型的是 `zz` 这种题集分隔标记，不判就会算出下标 500 越出 361 格的盘面）。
+     SZ 出现在根节点，而 nodes 就是从根节点开始按主分支收集的，所以扫得到。 */
+  let boardSize = 19;
+  for (const t of nodes) {
+    if (t.id !== 'SZ' || !t.vals.length) continue;
+    const n = parseInt(t.vals[0], 10);
+    if (n >= 2 && n <= 52) { boardSize = n; break; }
+  }
+
+  const moves = [], comments = [], mainLine = [], seps = [];
   for (const nd of nodes) {
     /* 先看这个节点是不是一手棋（一次扫全部 props，所以 C 的位置无关） */
     let movesHere = [];
@@ -1318,7 +1328,21 @@ function parseSGF(text) {
       if (v.length !== 2) continue;
       /* ★ 这里用 charCode-97 而不是查表 —— SGF 是 a=1…h=8,**i=9**,j=10…s=19，
          与界面/GTP 那套「跳过 I」的字母表**不同**（见文件顶部 SGF_COLS 的注释）。 */
-      movesHere.push({ color, x: v.charCodeAt(0) - 97, y: v.charCodeAt(1) - 97 });
+      const x = v.charCodeAt(0) - 97, y = v.charCodeAt(1) - 97;
+      /* ★ 越界坐标不能当真实一手棋（2026-10-06 审查发现，真实棋谱里 2.97% 出现）。
+         最常见的是 `;W[zz]` / `;B[zz]` —— 它不是坏数据，而是**死活题集里两张题
+         之间的分隔标记**（前一节点的解说词正好写着「以上为第 N 图正解」）。
+         原来的错：算成 x=25,y=25 → 下标 500，而盘面只有 361 格，
+         TypedArray **静默忽略越界写、不报错** → 那手棋凭空消失，
+         但它仍算进手数 → 后面全部手顺错位、黑白颠倒。
+         现在：不生成 move（这一手在盘上不存在），并记成 sep 让上层知道
+         「这里换了一道题」—— 具体要不要分段显示，见 renderCommentBox 的用法。 */
+      if (!Number.isFinite(x) || !Number.isFinite(y) ||
+          x < 0 || y < 0 || x >= boardSize || y >= boardSize) {
+        seps.push(moves.length + (movesHere.length - 1));
+        continue;
+      }
+      movesHere.push({ color, x, y });
     }
     moves.push(...movesHere);
     /* 再收这个节点上的解说词，并记下它在**原文里的位置**（编辑时要用它精确落刀） */
@@ -1331,7 +1355,10 @@ function parseSGF(text) {
     }
     mainLine.push({ at: nd.at, end: nd.end, moveIdx: movesHere.length ? moves.length : 0, cSpan });
   }
-  const size = parseInt(firstProp('SZ') || '19', 10) || 19;
+  /* 盘面大小：上面已按 nodes 里的 SZ 算过 boardSize，这里直接用同一个值，
+     **不重新解析** —— 两份口径（一个不限范围、一个限 2~52）万一哪天不一致，
+     就会出现「按 19 路拦越界、却按 52 路开棋盘」这种错位。 */
+  const size = boardSize;
   const kmRaw = firstProp('KM');
   const komi = kmRaw === null ? null : parseFloat(kmRaw);
   const ab = allPts('AB'), aw = allPts('AW');
@@ -1344,7 +1371,14 @@ function parseSGF(text) {
   }
   /* 双方名字（别的软件导出的棋谱大多有；没有就是 null） */
   const pb = firstProp('PB'), pw = firstProp('PW');
-  return { ok: moves.length > 0 || ab.length > 0, size, komi, rules, ab, aw, moves, pb, pw, comments, mainLine };
+  return {
+    ok: moves.length > 0 || ab.length > 0, size, komi, rules, ab, aw, moves, pb, pw,
+    comments, mainLine,
+    /* 「换了一道题」的位置（题集里 `zz` 分隔标记所在的手数）。
+       我们**不做分支树、也不做多题分段显示**（用户定的：只显示主干），
+       但保留这个信息 —— 将来若要做「第 3 题」这类提示，不用再改解析器。 */
+    seps
+  };
 }
 
 /* ---- 把「第 at 手」的解说词写回 SGF 文本（2026-10-06 新增） ----
