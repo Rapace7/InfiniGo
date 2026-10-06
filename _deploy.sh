@@ -69,10 +69,14 @@ npm run dist 2>&1 | grep -E "building|packaging|error|Error" | tail -4
 # ★ 为什么要这一步（2026-10-06 用户定的分工）：
 #   · D:\GoStudy\RapaceGo\      = **开发目录**（源代码 + node_modules，我改代码用）
 #   · D:\GoStudy\玄清围弈\       = **正式版**（用户双击用；exe 在根目录，引擎在同级）
-#   两者必须分开：开发目录里没有可双击的 exe（要走 npm 起），
-#   而 dist\win-unpacked 虽然能跑，但我每次打包会 rm -rf 它 —— 桌面快捷方式指向
-#   它就会突然失效。所以正式版要有一份**独立的、不参与打包流程**的拷贝。
+#   两者必须分开：开发目录里没有可双击的 exe（要走 npm 起）。
 #   用户明确要求：**每次打包直接覆盖旧版，不用保留**（旧版本身有问题）。
+#
+# ★ 问过「为什么不直接让打包器输出到玄清围弈」—— 查了 electron-builder 源码：
+#   appOutDir 是 `path.join(outDir, "win-unpacked")` **拼出来的硬编码目录名**，
+#   改不了。所以只能「打包 → 复制过去 → 删掉中间产物」。
+#   但复制 376MB 实测只要 **0.3 秒**，中间那步根本不花时间；
+#   真正要避免的是**复制完把源留在那儿白占 376MB**（之前就是这个问题）。
 DEPLOY_DIR="D:/GoStudy/玄清围弈"
 if [ -d dist/win-unpacked ]; then
   echo
@@ -89,6 +93,10 @@ if [ -d dist/win-unpacked ]; then
   cp -r dist/win-unpacked/. "$DEPLOY_DIR/"
   echo "  ✓ 已同步到 $DEPLOY_DIR（$(du -sh "$DEPLOY_DIR" 2>/dev/null | cut -f1)）"
   echo "    保留：settings.json（引擎路径）、records/（你的棋谱）"
+  # ★ 立刻删掉中间产物：它和正式版内容完全相同，留着白占 376MB，
+  #   而且用户可能误点那个 exe（下次打包它会消失 → 快捷方式突然失效）。
+  rm -rf dist/win-unpacked
+  echo "    已删除中间产物 dist\\win-unpacked（省 376MB，避免误点）"
   # 快捷方式要重建才指向新位置（指向旧的 exe 路径不会自动更新）
   rm -f "$USERPROFILE/Desktop/玄清围弈.lnk" 2>/dev/null || true
 else
