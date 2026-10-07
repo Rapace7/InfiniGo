@@ -831,7 +831,6 @@ function syncUI() {
      那样一旦 HTML 和 state 初值不一致，就会出现「开关显示是开的、其实没生效」
      （2026-10-04 改启动默认值时差点踩到）。 */
   $('chk-show').checked = state.showHints;
-  $('pick-show-hints').checked = state.showHints;
   $('chk-coords').checked = state.showCoords;
   $('chk-nums').checked = state.showNums;
   $('chk-pv').checked = state.showPV;
@@ -1218,16 +1217,18 @@ $('btn-pass').onclick = () => {
   syncUI();
 };
 
-/* 这个开关只管「棋盘上画不画推荐点」——右侧胜率是客观数据，始终显示 */
+/* 这个开关只管「棋盘上画不画推荐点」——右侧胜率是客观数据，始终显示。
+   ★ 全软件只有**这一个**开关（「显示」菜单里，快捷键 T）。
+     2026-10-07：外部 PR 曾在「推荐落点讲解」卡片里也加过一个同名开关，用户要求删掉 ——
+     **两处重复只会让人搞不清该信哪个**，而且两个控件必须时刻同步、很容易漏。
+     顺手加了 localStorage 记住选择（原来是启动默认关，每次都得重开）。 */
 function setHintsVisible(visible) {
   state.showHints = !!visible;
   $('chk-show').checked = state.showHints;
-  $('pick-show-hints').checked = state.showHints;
-  try { localStorage.setItem('rapacego.showHints', String(state.showHints)); } catch { /* 显示仍可使用 */ }
+  try { localStorage.setItem('rapacego.showHints', String(state.showHints)); } catch { /* 记不住也能用 */ }
   draw();
 }
 $('chk-show').onchange = e => setHintsVisible(e.target.checked);
-$('pick-show-hints').onchange = e => setHintsVisible(e.target.checked);
 
 $('chk-coords').onchange = e => {
   state.showCoords = e.target.checked;
@@ -3852,7 +3853,7 @@ if (window.api) {
   const ENG_KEYS = { katago: ['analyze', 'play'], coach: ['coach'] };
   const ENG_META = {
     katago: { on: 'KataGo', tip: '算胜率、目差、推荐点、形势、复盘，也负责 AI 落子' },
-    coach:  { on: 'LoGos（讲解模型）', tip: '用大白话讲棋（分析讲解 / 选点讲解 / 全盘讲解）' },
+    coach:  { on: 'LoGos（讲解模型）', tip: '用大白话讲棋（分析讲解 / 推荐落点讲解 / 全盘讲解）' },
   };
   const ENG_STATE_TXT = { off: '未加载', loading: '加载中…', ready: '就绪', paused: '已暂停', error: '出错', partial: '部分就绪' };
 
@@ -5313,13 +5314,18 @@ const COACH_PH_EXPLAIN = [
   '回看、打谱都能用。点一次讲一次。',
 ].join('\n');
 
+/* 空状态的说明。
+   ★ 措辞要点（2026-10-07 按用户要求改）：**必须点明「点是谁选的」** ——
+     原来写成「LoGos 推荐落点讲解」，会被读成"LoGos 自己选的点、和 KataGo 不是一批"，
+     那是误解：**点全是 KataGo 算的，LoGos 只负责讲道理**（它连 prompt 里都是被点名讲某一点的）。 */
 const COACH_PH_PICK = [
-  '点击「生成讲解」，解释当时的推荐落点。',
+  '点击「生成讲解」：由 LoGos 逐点解释 KataGo 算出的推荐落点。',
   '',
-  '棋盘：KataGo 的实时推荐，随分析更新。',
-  '这里：点击时的推荐落点快照，由 LoGos 解释。',
+  '选点是 KataGo 的事，LoGos 只讲「为什么这么下」。',
+  '棋盘上要不要显示那批点，用「显示」菜单里的「实时推荐落点」（快捷键 T）。',
   '',
-  '讲解会保留；局面变化后请重新生成。',
+  '讲解是**点击那一刻**的快照：之后棋盘会继续随分析更新，两者可能不同，',
+  '上方会提示「当前局面已变化」；要讲现在的局面，请重新生成。',
   '',
   '打谱时用不了 —— 那是别人的棋，不替人支招。',
 ].join('\n');
@@ -5649,7 +5655,7 @@ function renderCoachPanels(force) {
     if (box) {
       const rec = state.coach.pick;
       box.textContent = '';
-      box.appendChild(mkEl('div', 'src', '讲解基于点击时的 KataGo 推荐落点。'));
+      box.appendChild(mkEl('div', 'src', '点由 KataGo 定 · 讲解由 LoGos 写 · 基于点击那一刻的推荐落点'));
       if (rec && rec.pts && rec.pts.length) {
         rec.pts.forEach(p => {
           box.appendChild(mkEl('div', 'pnt', p.title));
@@ -5690,10 +5696,10 @@ async function runPickExplain() {
      所以同一时刻只能有一条在跑 —— 否则后点的会静默把先点的打断（审查发现）。 */
   if (state.coach.busy.explain >= 0) { flash('「分析讲解」正在讲 —— 等它讲完再来点推荐点'); return; }
   if (state.coach.batch) { flash('全盘讲解正在跑 —— 等它跑完，或点进度条旁边的「停止」'); return; }
-  if (needEngine('coach', '选点讲解')) return;
+  if (needEngine('coach', '推荐落点讲解')) return;
   if (state.noGame || !state.moves.length) { flash('先落几手，再来问「该走哪」'); return; }
   if (state.fromRecord) { flash('打谱时不讲选点 —— 那是别人的棋，不替人支招'); return; }
-  if (!engineReady) { needEngine('analyze', '选点讲解'); return; }
+  if (!engineReady) { needEngine('analyze', '推荐落点讲解'); return; }
   if (state.candAt !== state.viewAt || !state.candidates.length) {
     flash('KataGo 还在算这个局面 —— 等推荐点出来再点');
     return;
@@ -5709,7 +5715,7 @@ async function runPickExplain() {
 
   const body = $('pick-body');
   body.textContent = '';
-  body.appendChild(mkEl('div', 'src', '讲解基于点击时的 KataGo 推荐落点。'));
+  body.appendChild(mkEl('div', 'src', '点由 KataGo 定 · 讲解由 LoGos 写 · 基于点击那一刻的推荐落点'));
   const btn = $('btn-pick');
   state.coach.busy.pick = at;
   const snapshot = { at, side, positionKey: pickPositionKey(at), gen: gameGen };
@@ -5796,7 +5802,7 @@ async function runAnalysisExplain() {
   if (needEngine('coach', '分析讲解')) return;
   if (state.coach.batch) { flash('全盘讲解正在跑 —— 等它跑完，或点进度条旁边的「停止」'); return; }
   /* 两条讲解共用一条 LoGos 通道 → 同一时刻只允许一条（见 runPickExplain 的注释）。 */
-  if (state.coach.busy.pick >= 0) { flash('「选点讲解」正在讲 —— 等它讲完再来'); return; }
+  if (state.coach.busy.pick >= 0) { flash('「推荐落点讲解」正在讲 —— 等它讲完再来'); return; }
   if (state.coach.busy.explain >= 0) { flash('上一段讲解还在生成，稍等…'); return; }
   const at = state.viewAt;
   if (at <= 0) { flash('先用底栏的回看跳到某一手，再来讲'); return; }
@@ -5971,7 +5977,7 @@ async function runBatchCoach() {
      直接点「全盘讲解」会把在跑的那条**静默掐掉** —— 两条共用 coachSeq 通道，
      原来只有「批量挡单条」这一半（批量期间按钮被 disabled），反向漏了。 */
   if (state.coach.busy.explain >= 0 || state.coach.busy.pick >= 0) {
-    flash('正在讲别的（分析讲解 / 选点讲解）—— 等它讲完再点全盘讲解');
+    flash('正在讲别的（分析讲解 / 推荐落点讲解）—— 等它讲完再点全盘讲解');
     return;
   }
   if (!state.fromRecord || !state.recName) { flash('先打开一份棋谱，再来做全盘讲解'); return; }
