@@ -536,6 +536,23 @@ main { flex: 1; display: flex; min-height: 0; }
 }
 .board-gate .gate-tip a { color: #fff; text-decoration: underline; cursor: pointer; }
 .board-gate .gate-tip[hidden] { display: none; }
+/* ★ 引擎起不来的**具体原因**（main.js 从引擎 stderr 里捞的原话转写）。
+   2026-10-07 新增 —— 触发它的第一个真实场景是「权重比引擎新」：
+   训练站已停用 v1.18.0 之前的引擎，用户拿老引擎配新权重时引擎直接退出，
+   而上面那句「引擎没起来」完全没告诉他为什么。
+   ⚠️ 必须显式写 [hidden] 那条：这里用了 display:flex 之外还有 max-width，
+      但只要父级是 flex 容器，浏览器默认的 [hidden]{display:none} 就可能被压过
+      （本项目在 .verdict / .board-gate / .mrow 上已经踩过三次）。 */
+.board-gate .gate-why {
+  pointer-events: auto;
+  margin: 10px 0 0; max-width: 430px;
+  padding: 8px 12px; border-radius: 8px;
+  background: rgba(192, 57, 43, .78);
+  font-size: 12px; line-height: 1.7; color: #fff;
+  text-align: left; text-shadow: none;
+  word-break: break-word;
+}
+.board-gate .gate-why[hidden] { display: none; }
 .board-gate button {
   pointer-events: auto;
   font-family: inherit;
@@ -813,6 +830,15 @@ main { flex: 1; display: flex; min-height: 0; }
 .setmark { flex: none; width: 64px; font-size: 11.5px; text-align: right; color: var(--text-dim); }
 .setmark.ok { color: var(--accent); }
 .setmark.bad { color: var(--danger); }
+/* ★「引擎兼容性自检」那一行（2026-10-07 新增）：结果可能是一整句建议，所以
+   ⚠️ 不能沿用 .setmark 的固定 64px 宽 —— 那句话会被压成竖条。
+   这里 flex:1 + 允许换行，并把不匹配的那句标红（.bad）。 */
+.eng-check {
+  flex: 1; min-width: 0; font-size: 11.5px; line-height: 1.65;
+  color: var(--text-dim); white-space: normal; word-break: break-word;
+}
+.eng-check.ok { color: var(--accent); }
+.eng-check.bad { color: var(--danger); }
 .set-msg {
   font-size: 12px; line-height: 1.7; color: var(--accent);
   margin: 12px 0 0; min-height: 20px; word-break: break-all;

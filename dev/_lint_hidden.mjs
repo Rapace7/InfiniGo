@@ -4,13 +4,18 @@
    本项目已因此踩坑 3 次（.verdict / .board-gate / .mrow），这里全量扫一遍。
    用法：node _lint_hidden.mjs */
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const HTML = fs.readFileSync('renderer/index.html', 'utf8');
-const CSS = fs.readFileSync('renderer/style.css', 'utf8');
+/* ★ 2026-10-07：脚本搬进 dev\ 之后不能再用相对路径读 —— 统按脚本自身位置定位仓库根。 */
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+const HTML = fs.readFileSync(path.join(ROOT, 'renderer/index.html'), 'utf8');
+const CSS = fs.readFileSync(path.join(ROOT, 'renderer/style.css'), 'utf8');
 /* ★ 必须先剥掉注释再扫：注释里常把「不要这样写」的反例代码原样写上
    （比如 `$('clock-card').hidden = ...`），不剥就会当成真代码误报。
    第一版没剥 → clock-card 那条修完之后仍在报。 */
-const APP = fs.readFileSync('renderer/app.js', 'utf8')
+const APP = fs.readFileSync(path.join(ROOT, 'renderer/app.js'), 'utf8')
   .replace(/\/\*[\s\S]*?\*\//g, ' ')
   .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 

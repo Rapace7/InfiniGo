@@ -734,6 +734,11 @@ function syncUI() {
      对方第一眼看到的就是这条路（用户要求：不要自动弹窗，给个入口就行）。 */
   $('board-gate').hidden = !state.noGame;
   $('gate-tip').hidden = !(state.noGame && !!engineNote);
+  /* ★ 引擎起不来的**具体原因**（2026-10-07 新增）。engineNote 里现在可能是
+     main.js 从引擎 stderr 捞出来的原话转写（比如「权重文件太新：它需要更高版本的
+     KataGo 引擎…」）—— 那句话比「引擎没起来」有用得多，得让它露出来。 */
+  const why = $('gate-why');
+  if (why) { why.hidden = !(state.noGame && !!engineNote); why.textContent = engineNote || ''; }
 
   /* ★ 各开关的勾选状态**统一从 state 画回来**（单一来源）。
      以前只同步了 chk-human，其余全靠 index.html 上的 `checked` 属性 ——
@@ -3064,7 +3069,11 @@ async function runAnalysisOnce(at) {
     if (at === state.viewAt) {
       $('eval-wr').textContent = timedOut ? '分析超时' : '分析失败';
       $('eval-wr-w').textContent = '';
-      $('eval-lead').textContent = res && res.error ? res.error : '';
+      /* ★ 有引擎级错误（比如**权重与引擎版本不匹配**）时优先显示它 ——
+         那一句是 main.js 从引擎 stderr 里捞出来的原话转写，用户照着就能解决。
+         显示在这里（右侧胜率卡）是因为它**任何局面下都看得见**，
+         而棋盘中央那条提示只在「未开局」时才有（见 syncUI 里的 gate-tip）。 */
+      $('eval-lead').textContent = engineNote || (res && res.error ? res.error : '');
       $('eval-lead-w').textContent = '';
     }
     return false;
@@ -4795,6 +4804,54 @@ async function refreshSettingsMarks() {
   }
 }
 
+/* ★ 引擎兼容性自检（2026-10-07 新增）。
+   把「引擎自报的后端」和「屏幕这块显卡」并排显示；对不上就把那句建议标红。
+   为什么不做成**自动**弹窗：正常用户看到弹窗只会慌。放在设置面板里、给个「检查」按钮，
+   需要的人自然会点。而且引擎没配好时也只是"信息"，不是错误。
+   ⚠️ 探测会真的跑一次 katago.exe（约 0.1 秒），所以只在用户点「检查」时做，
+     不在打开设置时自动跑 —— 免得每次开设置都去启动一个进程。 */
+function renderEngineCheck(r) {
+  const el = $('eng-check');
+  if (!el) return;
+  el.classList.remove('ok', 'bad');
+  if (!r || !r.backend) { el.textContent = '检查失败：拿不到引擎信息'; el.classList.add('bad'); return; }
+  const be = r.backend, gpu = r.gpu || {};
+  if (!be.ok) {
+    /* 引擎文件不在/跑不起来 —— 这时「找不到文件」才是用户要听的那句话 */
+    el.textContent = be.why || '读不到引擎信息';
+    el.classList.add('bad');
+    return;
+  }
+  const gpuTxt = gpu.name ? (gpu.name + (gpu.brand ? '（' + gpu.brand.toUpperCase() + '）' : '')) : '认不出显卡';
+  const parts = [
+    '引擎：' + (be.name || be.raw) + (be.version ? '（KataGo v' + be.version + '）' : ''),
+    '显卡：' + gpuTxt,
+  ];
+  if (r.warn) {
+    el.textContent = parts.join('　·　') + '　——　' + r.warn;
+    el.classList.add('bad');
+  } else {
+    el.textContent = parts.join('　·　') + '　——　✓ 这两者能配上';
+    el.classList.add('ok');
+  }
+}
+
+const btnEngCheck = $('btn-eng-check');
+if (btnEngCheck) {
+  btnEngCheck.onclick = async () => {
+    const el = $('eng-check');
+    const old = btnEngCheck.textContent;
+    btnEngCheck.disabled = true;
+    btnEngCheck.textContent = '检查中…';
+    if (el) { el.classList.remove('ok', 'bad'); el.textContent = '正在读引擎后端…'; }
+    let r = null;
+    try { r = await window.api.engineCheck(); } catch (e) { r = null; }
+    renderEngineCheck(r);
+    btnEngCheck.disabled = false;
+    btnEngCheck.textContent = old;
+  };
+}
+
 function fillSettingsInputs() {
   for (const k of SET_KEYS) $('set-' + k).value = (setCfg && setCfg[k]) || '';
 }
@@ -4822,6 +4879,10 @@ async function openSettings() {
   fillSettingsInputs();
   fillRecentWeights(info && info.recent);
   setMsg('');
+  /* 自检结果**不跨次沿用**：上次那份可能是改路径之前读的，留着会误导。
+     清成提示语，要看的自己点「检查」——反正那次探测只花 0.1 秒。 */
+  const ec = $('eng-check');
+  if (ec) { ec.classList.remove('ok', 'bad'); ec.textContent = '点「检查」看结果'; }
   SET_MASK.classList.add('open');
   await refreshSettingsMarks();
 }

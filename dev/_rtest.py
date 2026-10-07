@@ -4,7 +4,7 @@
 用法：python _rtest.py [测试脚本] [截图名] [第二段脚本] [第二张截图名]
 全程只管理自己启动的 electron 进程，绝不碰用户已开着的实例。
 """
-import subprocess, time, os, ctypes, sys, struct, zlib
+import subprocess, time, os, ctypes, sys, struct, zlib, shutil
 from ctypes import wintypes
 
 # ★ 2026-10-06 深夜补：Windows 上 Python 的 stdout 默认是 GBK（cp936），
@@ -22,14 +22,33 @@ os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 
 # ★ 项目目录**从本文件位置推导**，不写死盘符 ——
 #   否则把文件夹改名（GoMate → RapaceGo）后整套测试脚本就全废了。
-APP = os.path.dirname(os.path.abspath(__file__))
+#   ⚠️ 2026-10-07：本脚本和其他开发脚本一起搬进了 dev\ ——
+#      所以 APP 是**本文件的上一级**（仓库根），不是本文件所在目录。
+#      （原来 APP=dirname(__file__) 是对的，那时脚本就在仓库根；搬完就错了一级，
+#        表现为 FileNotFoundError: ...\dev\node_modules\electron\dist\electron.exe）
+DEV = os.path.dirname(os.path.abspath(__file__))
+APP = os.path.dirname(DEV)
 EXE = os.path.join(APP, 'node_modules', 'electron', 'dist', 'electron.exe')
-NODE = r'C:\Users\rapac\.workbuddy\binaries\node\versions\22.22.2-6\node.exe'
+# node 路径：先看 PATH，再退回本机常用位置 —— 原来写死了一个绝对路径，
+# 换机器/升版本就废（而测试脚本本身不该和某台机器绑死）。
+NODE = shutil.which('node') or next(
+    (p for p in (
+        os.path.expandvars(r'%LOCALAPPDATA%\Programs\nodejs\node.exe'),
+        r'C:\Program Files\nodejs\node.exe',
+    ) if os.path.exists(p)), 'node')
 G = APP + os.sep
-S1 = sys.argv[1] if len(sys.argv) > 1 else G + "_cdp_test.mjs"
-P1 = sys.argv[2] if len(sys.argv) > 2 else G + '_rule.png'
+# 测试脚本自己现在都在 dev\ 里；两个都支持：先按给的名字找，再按 dev\ 找。
+def _resolve(p, default_name):
+    if not p:
+        p = default_name
+    if os.path.isabs(p) or os.path.exists(p):
+        return p
+    return os.path.join(DEV, p)
+
+S1 = _resolve(sys.argv[1] if len(sys.argv) > 1 else None, "_cdp_test.mjs")
+P1 = _resolve(sys.argv[2] if len(sys.argv) > 2 else None, '_rule.png')
 S2 = sys.argv[3] if len(sys.argv) > 3 else None
-P2 = sys.argv[4] if len(sys.argv) > 4 else G + '_panel2.png'
+P2 = _resolve(sys.argv[4] if len(sys.argv) > 4 else None, '_panel2.png')
 
 user32 = ctypes.windll.user32
 gdi32 = ctypes.windll.gdi32

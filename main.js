@@ -15,7 +15,7 @@ const { app, BrowserWindow, ipcMain, shell, dialog, screen } = require('electron
 const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
-const { spawn } = require('child_process');
+const { spawn, execFileSync } = require('child_process');
 const http = require('http');       // LoGos 靠 HTTP 说话（llama-server 托管）
 
 /* ---------- 「基准目录」：开发模式 vs 打包模式 ----------
@@ -334,6 +334,22 @@ function launch(e) {
   readline.createInterface({ input: e.proc.stderr }).on('line', ln => {
     e.stderrTail.push(ln);
     if (e.stderrTail.length > 200) e.stderrTail.shift();
+    /* ★★ 权重与引擎版本不匹配 → 把**引擎的原话**透到界面上（2026-10-07 新增）。
+       为什么必须透出来：KataGo 的权重是分代际的 —— 训练站（katagotraining.org）
+       2026-09-15 起已停用 v1.18.0 之前的引擎，站上最新的都是 transformer 权重。
+       用户拿着老引擎 + 新权重时，引擎**直接退出**，而界面上原来只会显示
+       「引擎异常 / 分析失败」—— 他根本猜不到是"引擎版本太旧吃不下这份权重"。
+       实测（本机 katago.exe 里的原话）：
+         This neural net requires a newer KataGo version. Obtain a newer KataGo at https://github.com/...
+         This neural net is an invalid version, you probably specified the wrong file. Supposed model version: ...
+         This neural net is from an extremely old version of KataGo and is no longer supported by the engine.
+       只要命中这几句里的关键词，就把这句原话存成引擎错误（e.lastErr），
+       它会一路显示到状态栏（engineNote）和「分析失败」那一行上。 */
+    const weightMsg = weightVersionComplain(ln);
+    if (weightMsg) {
+      e.lastErr = weightMsg;
+      console.warn('[engine:' + e.key + '] 权重与引擎版本不匹配：' + weightMsg);
+    }
   });
 
   e.proc.on('exit', code => {
@@ -835,6 +851,31 @@ function onLine(e, line) {
       send('engine:progress', Object.assign({ engine: e.key }, payload));
     }
   }
+}
+
+/* ---------- 权重代际 / 引擎版本不匹配的识别（2026-10-07 新增） ----------
+   KataGo 的权重是**分代际**的，而引擎只认自己那一代及更早的：
+     · v1.13.0 起支持带改进输出头的 b18c384nbt
+     · v1.14.0 起支持 b28
+     · **v1.17.0 起支持 transformer（当前最新一代）**
+     · 训练站 2026-09-15 公告：**已停用 v1.18.0 之前的引擎**，站上最新的都是 transformer
+   于是「老引擎 + 新权重」= 引擎加载权重失败后**直接退出**。
+   用户看到的现象只是「引擎起不来」，看不出原因 —— 所以这里把引擎的原话捞出来。
+   返回一句给用户看的话（认不出就返回空串，绝不瞎猜）。 */
+function weightVersionComplain(line) {
+  const s = String(line || '');
+  if (/requires a newer KataGo version/i.test(s)) {
+    return '权重文件太新：它需要更高版本的 KataGo 引擎。'
+      + '去 https://github.com/lightvector/KataGo/releases 下最新的 katago.exe（v1.18.0 以上），'
+      + '在「设置」里把「KataGo 程序」指过去；或者换一份与当前引擎同时代的权重。';
+  }
+  if (/extremely old version of KataGo/i.test(s)) {
+    return '权重文件太旧：这个引擎已不再支持它。请换一份较新的权重（或把引擎降到与它同时代）。';
+  }
+  if (/invalid version, you probably specified the wrong file/i.test(s)) {
+    return '这个文件不是有效的 KataGo 权重（可能选错了文件）。请选 .bin.gz 结尾的权重。';
+  }
+  return '';
 }
 
 function analyze(e, req) {
@@ -1395,6 +1436,111 @@ function guessWeights(exePath) {
 }
 
 ipcMain.handle('settings:get', () => configInfo(PATHS));
+
+/* ---------- 引擎后端探测（2026-10-07 新增） ----------
+   为什么需要它：KataGo 有**多个互不通用**的构建 —— CUDA（N 卡专用）、OpenCL（任意品牌）、
+   ROCm（AMD 专用）、Metal（Mac）、Eigen（纯 CPU）。发错版本给用户，表现是
+   「引擎起不来」，而界面上只会显示「未加载 / 出错」，用户根本猜不到是显卡品牌不对。
+   实测依据（本机打包进去的那份）：
+     katago.exe version → "Using CUDA backend" + 旁边 16 个 cudnn/nvrtc dll + 一份
+     lizzieyzy-next-engine-backend.txt 写着 nvidia —— 这是 N 卡专用版。
+
+   实现：跑 `katago version` 读它的输出（**不看退出码** —— 实测该命令无参数时退出码是 1，
+   输出却在 stdout 里，只看退出码会误判成失败）。
+   只做**只读探测**，不改任何配置。 */
+const BACKEND_HINTS = {
+  cuda:    { name: 'CUDA', brand: 'nvidia', downloads: 'cuda / trt 系列（NVIDIA 专用）' },
+  tensorrt:{ name: 'TensorRT', brand: 'nvidia', downloads: 'trt 系列（NVIDIA 专用）' },
+  opencl:  { name: 'OpenCL', brand: null, downloads: 'opencl 系列（NVIDIA / AMD / Intel 都能用）' },
+  metal:   { name: 'Metal', brand: 'apple', downloads: 'Mac 用 Homebrew 装（brew install katago）' },
+  rocm:    { name: 'ROCm', brand: 'amd', downloads: 'rocm 系列（AMD 专用，注意按 GPU 的 gfx 代号选）' },
+  eigen:   { name: '纯 CPU', brand: null, downloads: 'eigen / eigenavx2（不用显卡）' },
+  eigenavx2: { name: '纯 CPU', brand: null, downloads: 'eigen / eigenavx2（不用显卡）' },
+  openvino:{ name: 'OpenVINO', brand: 'intel', downloads: 'onnx-openvino 系列（Intel 专用）' },
+  directml:{ name: 'DirectML', brand: null, downloads: 'onnx-directml 系列（跨品牌）' },
+  onnx:    { name: 'ONNX', brand: null, downloads: 'onnx 系列' },
+};
+
+/* 认不出的后端名一律当"未知"处理 —— 绝不用不确定的名字去报错（假警报比沉默更糟）。 */
+function probeBackendSync(exePath) {
+  if (!exePath || !fs.existsSync(exePath)) return { ok: false, why: '找不到 katago.exe' };
+  let out = '';
+  try {
+    /* 用 execFileSync：同步、拿得到 stdout，且 --version 这类命令瞬间返回。
+       ⚠️ windowsHide 必须开，否则会闪一个黑框（用户会以为软件出故障）。 */
+    out = execFileSync(exePath, ['version'], {
+      encoding: 'utf8', timeout: 15000, windowsHide: true,
+      // 有的构建把版本信息写 stderr；两路都收
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+  } catch (err) {
+    /* 退出码非 0 不算失败 —— 把已经拿到的输出接着解析（见上面的注释）。 */
+    out = String((err && (err.stdout || err.stderr)) || '');
+    if (!out) return { ok: false, why: (err && err.message) || '无法运行 katago' };
+  }
+  const m = /Using\s+([A-Za-z0-9_]+)\s+backend/i.exec(out);
+  const key = m ? m[1].toLowerCase() : '';
+  const ver = /KataGo\s+v?([0-9][0-9.]*)/i.exec(out);
+  const hint = BACKEND_HINTS[key] || null;
+  return {
+    ok: true,
+    raw: key || '未知',
+    name: hint ? hint.name : (m ? m[1] : '未知'),
+    brand: hint ? hint.brand : null,
+    downloads: hint ? hint.downloads : '',
+    version: ver ? ver[1] : '',
+  };
+}
+
+/* 屏幕这边的显卡信息（Electron 直接给，不用外部工具）。
+   只取品牌和型号，用来和引擎后端**配对检查**。
+
+   ⚠️ 2026-10-07 实测踩到：`app.getGPUInfo('basic')` 里的 `vendorId` 是**十进制数**。
+   本机 N 卡拿到的是 `4318`，而我一开始按十六进制 `0x10de` 去比 —— 匹配不上，
+   于是"显卡品牌"永远是空串，**不匹配警告永远不会触发**（静默失效，最难发现的那类）。
+   现在两种写法都认：先按原样查，查不到再按十六进制补零查。 */
+async function gpuInfo() {
+  try {
+    const info = await app.getGPUInfo('basic');
+    const g = ((info && info.gpuDevice) || [])[0] || {};
+    const raw = String(g.vendorId || '').trim().toLowerCase();
+    /* PCI 厂商号：10de=NVIDIA 1002/1022=AMD 8086=Intel 106b=Apple 1af4=virtio */
+    const BRAND = { '10de': 'nvidia', '1002': 'amd', '1022': 'amd', '8086': 'intel', '106b': 'apple', '1af4': 'virtio' };
+    const asHex = (v => {
+      if (!v) return '';
+      if (v.startsWith('0x')) return v.slice(2).padStart(4, '0');
+      /* 纯数字：十进制 → 十六进制补到 4 位（4318 → 10de） */
+      if (/^\d+$/.test(v)) return Number(v).toString(16).padStart(4, '0');
+      return v;                                   // 已经是 "10de" 这种十六进制串
+    })(raw);
+    return {
+      brand: BRAND[raw] || BRAND[asHex] || '',
+      vendorId: asHex || raw,
+      deviceId: String(g.deviceId || ''),
+      name: [g.vendorString, g.deviceString].filter(Boolean).join(' ').trim().slice(0, 80),
+    };
+  } catch (e) {
+    return { brand: '', vendorId: '', deviceId: '', name: '' };
+  }
+}
+
+/* 把两边对起来：不匹配时给一句**具体**的建议（含该去下哪个包）。
+   只报「确定的」不匹配 —— 后端品牌已知、显卡品牌已知、且两者不同。 */
+async function engineCheck() {
+  const be = probeBackendSync(PATHS.katago);
+  const gpu = await gpuInfo();
+  const out = { backend: be, gpu, warn: '' };
+  if (!be.ok) { out.warn = ''; return out; }              // 引擎文件都不在：那是"找不到"，不是后端问题
+  if (be.brand && gpu.brand && be.brand !== gpu.brand) {
+    const bName = { amd: 'AMD', intel: 'Intel', nvidia: 'NVIDIA', apple: 'Apple' }[gpu.brand] || gpu.brand;
+    const eName = { nvidia: 'NVIDIA 专用（CUDA）', amd: 'AMD 专用（ROCm）', intel: 'Intel 专用', apple: 'Apple 专用（Metal）' }[be.brand] || be.brand;
+    out.warn = '这台机器的显卡是 ' + bName + '，而当前的 KataGo 是「' + eName + '」版 —— **跑不起来**。'
+      + '要去 KataGo 官方 Release 下「' + (be.downloads || '对应你显卡的那份') + '」，'
+      + '在「设置」里把「KataGo 程序」指到新的 katago.exe。';
+  }
+  return out;
+}
+ipcMain.handle('engine:check', () => engineCheck());
 
 /* 弹系统文件选择框 —— 只返回选中的路径和检测结果，**不保存**（前端先给用户看一眼） */
 ipcMain.handle('settings:choose', async (_e, kind) => {

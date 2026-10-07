@@ -85,10 +85,52 @@ Click the indicator in the top bar when you want AI:
 
 | | Minimum | Recommended |
 |---|---|---|
-| OS | Windows 10 / 11 (64-bit) | same |
+| OS | **Windows 10 / 11 (64-bit)** | same |
 | RAM | 8 GB | 16 GB |
 | GPU | 4 GB VRAM (or integrated graphics — KataGo alone is fine) | **8 GB VRAM** (RTX 3060 / 4060 or better) |
 | Disk | ~2 GB | ~8 GB (if you want the commentary model) |
+
+> ### ⚠️ macOS users, read this first
+>
+> **This app is Windows-only and will not run on macOS.** (Not "untested" — not built:
+> the engine paths, desktop shortcuts and process handling are all Windows-specific;
+> a Mac build needs a real port.)
+>
+> - **Can you still use KataGo on a Mac?** Yes — KataGo itself supports macOS via the
+>   Metal backend and installs natively on Apple Silicon with `brew install katago`.
+>   It's **this GUI** that you can't use.
+> - **Want a Go GUI on macOS?** Use another one with the same engine:
+>   [KaTrain](https://github.com/sanderland/katrain),
+>   [Lizzie](https://github.com/featurecat/lizzie),
+>   [Sabaki](https://sabaki.yichuanshen.de/), or
+>   [q5Go](https://github.com/bernds/q5Go).
+> - **Want this app on your Mac?** Run Windows in a VM (Parallels/UTM), or remote
+>   desktop into a Windows machine.
+> - **Want a native Mac build?** Open an issue and say so — if there's demand I'll
+>   schedule it.
+>
+> ### GPU brands (NVIDIA / AMD / Intel all work)
+>
+> The app doesn't care about your GPU brand, but **KataGo ships several
+> mutually-incompatible builds** and the wrong one simply fails to start:
+>
+> | Your GPU | KataGo build (filename prefix) |
+> |---|---|
+> | **NVIDIA** | `cuda…` or `trt…` (fastest) |
+> | **AMD** | `opencl…` (works on any brand), or `rocm7.13-gfx???…` (faster; match your GPU: RDNA2=`gfx103X`, RDNA3=`gfx110X`, RDNA3.5=`gfx1151`, RDNA4=`gfx120X`) |
+> | **Intel iGPU / Arc** | `opencl…` or `onnx-openvino…` |
+> | Any brand (cross-vendor) | `onnx-directml…` |
+> | CPU only | `eigen…` / `eigenavx2…` |
+>
+> Unsure? Use `opencl` — it works on every brand, just a bit slower than a
+> vendor-specific build. Then verify in
+> **Settings → engine compatibility self-check → Check**, which reads the backend the
+> engine reports and compares it against your GPU.
+>
+> ⚠️ **Honest note**: development and testing happen on an **NVIDIA RTX 4070**, so the
+> **AMD / Intel paths are not machine-verified here**. The table above comes from
+> KataGo's official release assets. If an AMD card still won't start after those steps,
+> paste the self-check result into an issue.
 
 Measured VRAM usage (RTX 4070 Laptop / 8 GB, read with `nvidia-smi`):
 

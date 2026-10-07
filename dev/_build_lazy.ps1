@@ -1,31 +1,33 @@
 ﻿# ============================================================
-#  构建「RapaceGo懒人包」—— 给别人用夸克网盘下载、解压即可用
+#  构建「RapaceGo懒人包」—— 给别人用网盘下载、解压即可用
 #
-#  用法：  powershell -File _build_lazy.ps1
-#          powershell -File _build_lazy.ps1 -Zip      （顺便打包成 zip 放桌面）
+#  用法（在本脚本所在的 dev\ 目录下跑）：
+#      powershell -NoProfile -ExecutionPolicy Bypass -File _build_lazy.ps1
+#      powershell -NoProfile -ExecutionPolicy Bypass -File _build_lazy.ps1 -Zip
 #
 #  产出：C:\Users\<你>\Desktop\RapaceGo懒人包\
-#          ├─ RapaceGo\            程序本体（v0.1.10）
+#          ├─ RapaceGo.exe        程序本体（双击它）
 #          ├─ KataGo\             引擎 + 两个权重（别人不用自己配）
-#          ├─ LoGos\              讲解运行时
-#          └─ 双击就能用.bat       启动脚本
+#          ├─ LoGos\              讲解运行时 + 4.4GB 模型
+#          └─ 使用说明.txt
 #
 #  ★★ 懒人包的三条铁律（都是踩出来的）：
-#    1. **绝不带 settings.json** —— 里面是绝对路径（D:\GoStudy\KataGo\...），
-#       照抄进去别人解压后引擎必然找不到。删掉它，让软件用内置的相对路径默认值
-#       （main.js 的 defaultPaths：引擎放在**软件目录的上一级**）。
-#    2. **目录结构必须是「上一级有 KataGo / LoGos」** ——
-#       因为默认路径就是按那个布局找的（上一级\KataGo\engine\katago.exe）。
-#    3. **不能带 records/** —— 那是你自己的棋谱，别发给别人。
-#       也不能带 engine-logs（日志）。
+#    1. **绝不带 settings.json** —— 里面是本机绝对路径，别人解压后引擎必然找不到。
+#    2. **程序本体必须散在懒人包根目录、和 KataGo\ LoGos\ 平级** ——
+#       打包态的默认路径就是按 exe 同级找引擎的（见 main.js 的 BASE_DIR）。
+#       ⚠️ 2026-10-06 踩过：把程序套进 RapaceGo\ 子目录 → 引擎永远起不来。
+#    3. **不能带 records/ 和 userdata/** —— 前者是你的棋谱（隐私），
+#       后者是缓存（体积大且无用）。
 # ============================================================
 param(
-  [string]$Src      = "D:\GoStudy\RapaceGo",
+  # 默认 = 本脚本所在 dev\ 的**上一级**（开发目录）。别写死盘符 —— 换机器/改目录名就废。
+  [string]$Src      = "",
   [string]$KataGoSrc= "D:\GoStudy\KataGo",
   [string]$LoGosSrc = "D:\GoStudy\LoGos",
   [string]$OutDir   = "",          # 默认桌面
   [switch]$Zip
 )
+if (-not $Src) { $Src = Split-Path -Parent $PSScriptRoot }
 $ErrorActionPreference = "Stop"
 $log = @()
 function Say($t) { Write-Host $t; $script:log += $t }
@@ -74,11 +76,16 @@ Get-ChildItem "D:\GoStudy\玄清围弈" -Directory | Where-Object {
   $_.Name -notin 'records', 'engine-logs', 'userdata'
 } | ForEach-Object { Copy-Item $_.FullName (Join-Path $stage $_.Name) -Recurse -Force }
 
-# ★ 用**刚从源码打包出来**的 main.js 覆盖 —— 保证懒人包里是最新代码
-Copy-Item "$Src\main.js" (Join-Path $stage 'resources\app\main.js') -Force
-Copy-Item "$Src\renderer\app.js" (Join-Path $stage 'resources\app\renderer\app.js') -Force
-Copy-Item "$Src\renderer\index.html" (Join-Path $stage 'resources\app\renderer\index.html') -Force
-Copy-Item "$Src\renderer\style.css" (Join-Path $stage 'resources\app\renderer\style.css') -Force
+# ★ 程序本体只从「玄清围弈」取一份 —— 那是**唯一**的免解压版（由 _sync_deploy.ps1
+#   从 electron-builder 的产物同步过来），所以它里面的 resources\app\ 已经是最新代码。
+#   ⚠️ 2026-10-07 去掉了原来的「再用 $Src 的 main.js/renderer 覆盖一遍」：
+#      那会让「源码版」和「打包版」混在一起（程序骨架来自打包产物、代码来自工作区），
+#      一旦工作区有未提交的改动，懒人包就变成既不是这版也不是那版的东西。
+#      现在规则简单：**懒人包 = 玄清围弈 + 引擎 + 模型**，只认一个来源。
+if (-not (Test-Path (Join-Path $stage 'resources\app\main.js'))) {
+  throw "懒人包里没有 resources\app\main.js —— 「玄清围弈」目录不完整，先跑 _sync_deploy.ps1"
+}
+
 
 # ★★ 铁律 1：删掉 settings.json（绝对路径会害了别人）
 $sj = Join-Path $stage 'settings.json'

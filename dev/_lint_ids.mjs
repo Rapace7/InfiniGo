@@ -10,18 +10,25 @@
      ② **JS 动态生成的元素**（复盘报告里 `h += '<button id="rv-go">'`）
         → 单独收集"页面里 new 出来的 id"，从缺失名单里剔除。 */
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+/* ★ 2026-10-07：脚本从仓库根目录搬进了 dev\ —— 原来用相对路径读文件
+   （readFileSync('renderer/app.js')）就依赖「在哪儿运行」，一搬就坏。
+   现在统按**脚本自身位置**定位仓库根，从哪个目录运行都行。 */
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 const strip = s => s
   .replace(/\/\*[\s\S]*?\*\//g, ' ')          // 块注释
   .replace(/(^|[^:])\/\/[^\n]*/g, '$1');      // 行注释（避开 http:// 里的 //）
 
 const raw = {
-  app: fs.readFileSync('renderer/app.js', 'utf8'),
-  main: fs.readFileSync('main.js', 'utf8'),
-  pre: fs.readFileSync('preload.js', 'utf8'),
+  app: fs.readFileSync(path.join(ROOT, 'renderer/app.js'), 'utf8'),
+  main: fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8'),
+  pre: fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8'),
 };
 const APP = strip(raw.app), MAIN = strip(raw.main);
-const HTML = fs.readFileSync('renderer/index.html', 'utf8');
+const HTML = fs.readFileSync(path.join(ROOT, 'renderer/index.html'), 'utf8');
 
 /* ---------- HTML 里的 id ---------- */
 const htmlIds = [];

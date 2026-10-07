@@ -8,6 +8,15 @@ contextBridge.exposeInMainWorld('api', {
   /* 当前版本号（如 '0.1.1'）。界面显示在「帮助」面板上 —— 用户靠它判断要不要更新。 */
   appVersion: () => ipcRenderer.invoke('app:version'),
 
+  /* ★ 引擎后端自检（2026-10-07 新增）：
+     → Promise<{ backend: { ok, raw, name, brand, downloads, version }, gpu: { brand, name }, warn }>
+     backend.raw = kataGo 自报的后端（cuda / opencl / metal / rocm / eigen …）
+     gpu.brand   = 屏幕这块卡的品牌（nvidia / amd / intel / apple，认不出就是空串）
+     warn        = 两边对不上时给用户的一句具体建议（对得上就是空串）
+     用途：用户装了 N 卡专用版却在 A 卡机器上跑时，界面能明确告诉他去换哪个包，
+     而不是只显示「引擎起不来」。只读探测，不改任何配置。 */
+  engineCheck: () => ipcRenderer.invoke('engine:check'),
+
   /* 请求分析（strong 引擎）：{ initialStones, moves, rules, komi, size, maxVisits }
      → Promise<最终报告 | { error }> */
   analyze: req => ipcRenderer.invoke('engine:analyze', req),

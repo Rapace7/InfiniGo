@@ -1,6 +1,12 @@
 /* 验证「棋谱库位置可改」（2026-10-05 用户要求）：
    默认仍在程序目录\records，但设置面板和棋谱库里都能改；
    改的时候已有棋谱会**复制**过去（老的不删）。 */
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const TESTREC = path.join(ROOT, '_test_records').replace(/\\/g, '/');   // 注进页面里的调试目录
+
 const PORT = 9333;
 async function getPage() {
   for (let i = 0; i < 60; i++) {
@@ -28,7 +34,10 @@ async function js(expr) {
 const out = await js(`(async function(){
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const R = {};
-  const NEW = 'D:/GoStudy/RapaceGo/_test_records';
+  /* ★ 2026-10-07：测试用的临时目录改成**相对项目根算出来的绝对路径**——
+     原来写死 D:/GoStudy/RapaceGo/_test_records，换机器/搬目录就废。
+     （下面这些 test* 变量由脚本顶部定义后注入。） */
+  const NEW = '${TESTREC}';
 
   /* ---------- ① 默认位置 ---------- */
   const d0 = await window.api.records.dir();

@@ -1,4 +1,4 @@
-﻿# ============================================================
+# ============================================================
 #  把「玄清围弈」（已同步的最新版）里的**程序文件**复制到桌面懒人包
 #
 #  用法： powershell -NoProfile -ExecutionPolicy Bypass -File _update_lazy.ps1
@@ -35,13 +35,16 @@ Get-ChildItem -LiteralPath $SRC -Force | ForEach-Object {
 Write-Host ("  复制了 $copied 项")
 
 Write-Host '=== 2/4 核对懒人包里绝不能出现的东西 ==='
+# ⚠️ 2026-10-07：这些**不是**"源目录被污染"才会出现 —— 只要用懒人包里的 exe 启动过一次，
+#   它就会在包内自己生成 records\ 和 userdata\（还可能有个 engine-logs\）。
+#   所以这里不能只"报告"，要**直接清掉**（它们本来就不该出现在发给别人的包里）。
 $bad = @()
 foreach ($n in $EXCLUDE) {
-    if (Test-Path (Join-Path $DEST $n)) { $bad += $n }
+    $p = Join-Path $DEST $n
+    if (Test-Path $p) { Remove-Item $p -Recurse -Force; $bad += $n }
 }
 if ($bad.Count) {
-    Write-Host ("  ★ 懒人包里出现了不该有的东西：" + ($bad -join ', ')) -ForegroundColor Red
-    Write-Host '  （原来的懒人包本来就没有它们；出现了说明源目录被污染，请手动确认）' -ForegroundColor Yellow
+    Write-Host ("  已清掉测试残留：" + ($bad -join ', ') + "（多半是启动过包里的 exe 生成的）") -ForegroundColor Yellow
 } else {
     Write-Host '  ✓ settings.json / records / userdata / start.bat 都不在（正确）'
 }

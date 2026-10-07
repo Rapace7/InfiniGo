@@ -13,8 +13,11 @@
 import fs from 'fs';
 import path from 'path';
 import vm from 'vm';
+import { fileURLToPath } from 'url';
 
-const dir = 'D:/GoStudy/RapaceGo';
+/* ★ 2026-10-07：脚本搬进 dev\ 之后，被检查的测试脚本也都在 dev\ 里 ——
+   所以这里扫的是**本脚本所在目录**（原来写死项目根目录，搬完就扫不到任何东西）。 */
+const dir = path.dirname(fileURLToPath(import.meta.url));
 let bad = 0;
 
 for (const f of fs.readdirSync(dir).filter(x => x.endsWith('.mjs') && !x.startsWith('_precheck') && !x.startsWith('_dump'))) {

@@ -8,10 +8,16 @@
      于是把一堆真实存在的接口报成「没暴露」（假警报）。
      现在参数部分写成 `[^;{}\n]*?=>`（同一条目里不含分号/花括号，也没跨行）。 */
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
-const PRE = fs.readFileSync('preload.js', 'utf8');
-const MAIN = fs.readFileSync('main.js', 'utf8');
-const APP = fs.readFileSync('renderer/app.js', 'utf8');
+/* ★ 2026-10-07：脚本搬进 dev\ 之后，不能再用相对路径读（那依赖"在哪儿运行"）。
+   统按脚本自身位置定位仓库根。 */
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+
+const PRE = fs.readFileSync(path.join(ROOT, 'preload.js'), 'utf8');
+const MAIN = fs.readFileSync(path.join(ROOT, 'main.js'), 'utf8');
+const APP = fs.readFileSync(path.join(ROOT, 'renderer/app.js'), 'utf8');
 
 /* ---------- main.js：注册了哪些频道 ---------- */
 const handled = new Set();

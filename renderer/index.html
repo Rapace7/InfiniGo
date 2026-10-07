@@ -108,8 +108,12 @@
          ★ 这时棋盘是点不动的（见 app.js 的 tryPlay / state.noGame）。 -->
     <div class="board-gate" id="board-gate" hidden>
       <button id="btn-gate-new" title="开始一局新的对局（也可以点顶栏的「新对局」，或直接打开一份棋谱）">新建对局</button>
-      <!-- 引擎没起来时，这里多一条指路的提示（正常启动时看不到） -->
+      <!-- 引擎没起来时，这里多一条指路的提示（正常启动时看不到）。
+           ★ 2026-10-07：原来只有「引擎没起来 —— 点这里去设置」这一句，而引擎起不来的
+           原因有好几种（路径没配、**权重与引擎版本不匹配**、显存不够、DLL 缺失…），
+           用户看那句话等于没说。现在下面多一行 **引擎的原话**，由 main.js 从 stderr 里捞出。 -->
       <p class="gate-tip" id="gate-tip" hidden>引擎没起来 —— <a id="gate-setup">点这里去设置</a></p>
+      <p class="gate-why" id="gate-why" hidden></p>
     </div>
   </section>
 
@@ -469,6 +473,19 @@
         <span class="setmark" id="mark-recordsDir">—</span>
       </div>
     </div>
+    <!-- ★ 引擎后端自检（2026-10-07 新增）。
+         为什么要有它：KataGo 有 CUDA / OpenCL / ROCm / Metal / 纯 CPU 等**互不通用**的构建，
+         发错版本的表现只是「引擎起不来」，用户根本猜不到是显卡品牌不对。
+         这里把「引擎自报的后端」和「屏幕这块显卡」并排给出来，对不上就明确说去下哪个包。 -->
+    <div class="setgroup">
+      <div class="setgroup-h">引擎兼容性自检</div>
+      <div class="setrow" style="align-items:flex-start">
+        <span class="setlb" title="KataGo 有多个互不通用的构建：CUDA 只认 NVIDIA、ROCm 只认 AMD、Metal 给 Mac、OpenCL 任何品牌都行、eigen 是纯 CPU。装错版本的表现就是「引擎起不来」。这里读出引擎自己声明的后端，和屏幕上的显卡对一下。">当前引擎与显卡</span>
+        <span id="eng-check" class="eng-check">点「检查」看结果</span>
+        <button id="btn-eng-check">检查</button>
+      </div>
+    </div>
+
     <datalist id="recent-analyzeWeight"></datalist>
     <datalist id="recent-playWeight"></datalist>
     <datalist id="recent-coachWeight"></datalist>
@@ -587,7 +604,10 @@
         <li><b>段位档位</b><span>对手棋力里那「20 级 ~ 9 段」是<b>业余段位标尺</b>（官方没公布它对标哪个段位体系；最高档 9 段的位置大约是<b>业余顶尖、接近职业边缘</b>，<b>不是职业九段</b>）。明确是职业的只有「职业棋风 · 按年份」那一组。另外，默认的计算深度<b>会把该段位解不出的战术一起算掉、下得比标称强</b>，想贴近标称水平，就打开底栏的「拟人落子」。</span></li>
         <li><b>估算水平</b><span>按整盘平均目损粗略换算的启发式，<b>仅供参考</b> —— KataGo 的段位档是「模仿某段位棋手」，官方没有与真实段位的换算表。想知道准的，挑一档跟 AI 下几盘看胜负更实在。</span></li>
         <li><b>计算深度</b><span>底栏可调（默认 500）。搜得越多越准、但推荐点出得越慢；少于一两手能看清的差异，是噪声。<br><span class="dim">★ 实测（同一局面反复落子各测 6 次）：200 / 500 / 1000 三档，<b>推荐点出现的快慢几乎一样</b>（都在 0.49 秒左右）—— 因为推荐点在引擎吐出<b>第一份</b>结果时就画上去了，深度影响的是那个数字<b>收敛得多准</b>，而不是「有没有点」。所以想让它更准就调大，不必担心点会变慢。</span></span></li>
+        <li><b>引擎版本与权重要对得上</b><span>KataGo 的权重分<b>代际</b>，引擎只认自己那一代和更早的：<b>transformer</b> 权重（训练站现在最新的都是这种）要 <b>v1.17.0 以上</b>，b28 要 v1.14+，b18c384nbt 要 v1.13+。训练站 <b>2026-09-15 已停用 v1.18.0 之前的引擎</b>。<br>对不上时引擎<b>直接退出</b>，棋盘中央会把这个原因写出来（那是引擎的原话转写）。<span class="dim">最省事的做法：引擎和权重都从 <a href="https://github.com/lightvector/KataGo/releases" target="_blank">KataGo 的 Release 页</a>拿 —— 那里随发布附带的权重一定配套。</span></span></li>
+        <li><b>显卡品牌</b><span>软件不挑显卡，但 KataGo 有多个<b>互不通用</b>的构建，装错的表现只是「引擎起不来」：<br><b>N 卡</b> → <code>cuda</code> / <code>trt</code>；<b>A 卡</b> → <code>opencl</code>（通用）或 <code>rocm-gfx???</code>（按 GPU 代号）；<b>I 卡 / 核显</b> → <code>opencl</code> / <code>onnx-openvino</code>；<b>纯 CPU</b> → <code>eigen</code>。<br><span class="dim">「设置 → 引擎兼容性自检」能告诉你当前引擎是哪个后端、你的显卡是什么牌子、配不配。</span></span></li>
         <li><b>AI 准备中</b><span>刚启动那几秒，胜率条会显示「AI 准备中」—— 引擎还在预热，好了自动变数字。</span></li>
+        <li><b>权重从哪来</b><span>引擎和权重都是有版权的第三方组件，本软件<b>不附带</b>，要自己下。<br><b>最省事的做法</b>：<a href="https://github.com/lightvector/KataGo/releases" target="_blank">KataGo 的 Release 页</a> —— 那里随发布附带的权重和该版本引擎<b>必定配套</b>。<br>去训练站（katagotraining.org）抓最新权重也行，但<b>要认清代际</b>（见上一条）。<br><span class="dim">对弈权重（当 AI 对手用的那个）必须用文件名带 <code>human</code> 的，否则引擎会报错退出。</span></span></li>
         <li><b>手数后面的「…」</b><span>那一手的涨跌还在算。算出结果后变成数字，<b>之后就不再变</b>（见「主要功能 → 手数列表」）。</span></li>
         <li><b>解说词的来源</b><span>右下角「解说词」框里那段，是<b>这份棋谱文件自己带的</b>（别的软件 / 棋友写的），不是本软件生成的 —— 所以有就有、没有就空着。想加就点「编辑」自己写，保存后写回文件。里面的空行会被收掉（见「主要功能 → 解说词」）。</span></li>
       </ul>

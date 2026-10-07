@@ -2,10 +2,15 @@
    用途：README 的「主界面」展示图（原来那张是空棋盘，看不出软件能干什么）。
    ★ 用 Page.captureScreenshot 而不是窗口截图：拿到的是干净的渲染画面，不含窗口边框/标题栏。 */
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+/* ★ 2026-10-07：脚本搬进 dev\ —— 默认输出按脚本自身位置算，不写死盘符。 */
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 const PORT = 9333;
-const OUT = process.argv[2] || 'D:/GoStudy/RapaceGo/docs/screenshots/main-with-coach.png';
-const REC = process.argv[3] || null;          // 指定棋谱名（默认挑第一份）
+const OUT = process.env.SHOT_OUT || process.argv[2] || path.join(ROOT, 'docs/screenshots/main-with-coach.png');
+const REC = process.env.SHOT_REC || process.argv[3] || null;   // 指定棋谱名（默认挑第一份）
 
 async function getPage() {
   for (let i = 0; i < 60; i++) {

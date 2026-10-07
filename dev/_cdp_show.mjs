@@ -3,6 +3,11 @@
       只发一次 mouseMoved 的话，那个点会被当成「初始位置」，hover 不生效（2026-10-05 踩过）。 */
 const PORT = 9333;
 import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+/* ★ 2026-10-07：脚本搬进 dev\ —— 截图落到项目根的 _trash\，按脚本位置算。 */
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 async function getPage() {
   for (let i = 0; i < 60; i++) {
     try {
@@ -49,7 +54,7 @@ console.log('设置面板已打开；鼠标停在 KataGo 问号 (' + pos.x + ','
    交给外面截的话 hover 已经消失（2026-10-05 踩过）。 */
 const shot = await send('Page.captureScreenshot', { format: 'png' });
 if (shot.result && shot.result.data) {
-  fs.writeFileSync('D:/GoStudy/RapaceGo/_trash/_shot_sethelp.png', Buffer.from(shot.result.data, 'base64'));
+  fs.writeFileSync(path.join(ROOT, '_trash/_shot_sethelp.png'), Buffer.from(shot.result.data, 'base64'));
   console.log('已截图 → _trash/_shot_sethelp.png');
 } else {
   console.log('★ 截图失败：' + JSON.stringify(shot).slice(0, 200));

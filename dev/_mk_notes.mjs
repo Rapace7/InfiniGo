@@ -3,9 +3,13 @@
    `IndexOf('三大目录')` 恒返回 -1（实测踩到）。node 读写 UTF-8 干净。
    用法：node _mk_notes.mjs  → 生成 _release_notes.md */
 import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const SRC = 'D:/GoStudy/RapaceGo/发布说明.md';
-const OUT = 'D:/GoStudy/RapaceGo/_release_notes.md';
+/* ★ 2026-10-07：脚本搬进 dev\ —— 路径按脚本自身位置算，不写死盘符。 */
+const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+const SRC = path.join(ROOT, '发布说明.md');
+const OUT = path.join(ROOT, '_release_notes.md');
 
 const t = fs.readFileSync(SRC, 'utf8');
 const marker = '## 关于「三大目录」的分工';

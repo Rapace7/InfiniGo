@@ -11,6 +11,9 @@
 
 ## 这是什么
 
+> **运行环境**：**Windows 10 / 11（64 位）**。显卡 N 卡 / A 卡 / Intel 都行（要下对引擎版本）。
+> **macOS 目前不支持** —— 详见「硬件要求 → macOS 用户请看这里」。
+
 市面上不缺围棋软件，这个想解决的是一个具体问题：**下完一盘棋，知道自己哪里错了、为什么错。**
 
 所以它把两件事拼在一起：
@@ -81,10 +84,28 @@
 
 | | 最低 | 推荐 |
 |---|---|---|
-| 系统 | Windows 10 / 11 64 位 | 同 |
+| 系统 | **Windows 10 / 11 64 位** | 同 |
 | 内存 | 8 GB | 16 GB |
 | 显卡 | 4GB 显存的独显（或核显，能跑 KataGo 就行） | **8GB 显存**（RTX 3060 / 4060 以上） |
 | 硬盘 | 约 2 GB | 约 8 GB（要装讲解模型的话） |
+
+> ### ⚠️ macOS 用户请看这里
+>
+> **本软件目前只支持 Windows，macOS 上跑不了。**（不是没测试，是没做：程序里的引擎路径、
+> 快捷方式、进程管理都是 Windows 专用的，Mac 版需要一次正经移植。）
+>
+> - **能用 KataGo 吗**：能 —— KataGo 官方支持 Mac（Metal 后端），
+>   `brew install katago` 直接装好，而且是 Apple Silicon 原生。
+>   但**本软件这个图形界面**用不了。
+> - **Mac 上想要一个能用的围棋 GUI**：换别的图形界面配同一个引擎，比如
+>   [KaTrain](https://github.com/sanderland/katrain)、
+>   [Lizzie](https://github.com/featurecat/lizzie)、
+>   [Sabaki](https://sabaki.yichuanshen.de/)、
+>   [q5Go](https://github.com/bernds/q5Go) —— 都能在 Mac 上跑。
+> - **想在这台 Mac 上用本软件**：装个 Windows 虚拟机 / 用 Parallels，
+>   或者用远程桌面连一台 Windows 机器。
+> - **想要原生 Mac 版**：去 [Issues](https://github.com/Rapace7/RapaceGo/issues) 说一声 ——
+>   有人需要我就排期做（要做的事在 README 的「开发方式」里有写）。
 
 显存实测（RTX 4070 Laptop / 8GB，用 `nvidia-smi` 量）：
 
@@ -107,9 +128,52 @@
 **没有独显也能用**：KataGo 支持纯 CPU 模式（设置面板里能改），慢但能下棋。
 讲解模型在 CPU 上也能跑，但速度会掉到每秒几个字，基本没法用。
 
+### 显卡品牌（N 卡 / A 卡 / I 卡都行）
+
+**软件不挑显卡，但 KataGo 有多个互不通用的构建** —— 装错版本的表现是「引擎起不来」，
+而错误信息不会告诉你是显卡品牌不对。所以先看这张表：
+
+| 你的显卡 | 下哪个 KataGo（文件名开头） |
+|---|---|
+| **NVIDIA** | `cuda…` 或 `trt…`（最快） |
+| **AMD** | `opencl…`（任何品牌都能用）；或 `rocm7.13-gfx???…`（更快，但**要对 GPU 代号**） |
+| **Intel 核显 / Arc** | `opencl…` 或 `onnx-openvino…` |
+| 任意品牌（跨厂商） | `onnx-directml…` |
+| 只想用 CPU | `eigen…` / `eigenavx2…` |
+
+**AMD 的 `rocm` 版要按代号选**（选错了同样起不来）：RDNA2 = `gfx103X`、
+RDNA3 = `gfx110X`、RDNA3.5 = `gfx1151`、RDNA4 = `gfx120X`。
+不确定自己是什么代号？**直接用 `opencl` 那份** —— 它不挑代数，一定能跑，只是比 rocm 慢一些。
+
+#### A 卡用户照着做（五步）
+
+1. 打开 <https://github.com/lightvector/KataGo/releases> → 最新那条 → **Assets**
+2. 下载 **`katago-v?…-opencl-windows-x64.zip`**（想更快就选 `rocm7.13-gfx???`，按上表对代号）
+3. 解压，把整个文件夹改名成 `KataGo`，放到和 `RapaceGo.exe` **平级**的位置
+4. 打开软件 →「**设置**」→「KataGo 程序」指到新解压出来的 `katago.exe`；
+   「分析权重」「对弈权重」仍指向你的 `.bin.gz`（权重不分显卡品牌，A 卡 N 卡共用同一份）
+5. 点「**设置 → 引擎兼容性自检 → 检查**」确认 —— 应当显示
+   「引擎：**OpenCL** · 显卡：…（AMD） —— ✓ 这两者能配上」
+
+> 讲解模型（LoGos）走 `llama.cpp`：它官方预编译包里同样有
+> `cuda / vulkan / rocm / sycl / openvino` 几种 Windows 构建 ——
+> **N 卡用 `cuda`，A 卡用 `vulkan` 或 `rocm`，I 卡用 `sycl` 或 `openvino`**。
+
+> ⚠️ **诚实说明**：本项目的开发与测试环境是 **NVIDIA RTX 4070**，
+> 所以 **A 卡 / Intel 显卡的路径我没有实机验证过**。
+> 上表的对应关系来自 KataGo 官方发布的资产清单（OpenCL / ROCm / DirectML / OpenVINO
+> 都是官方构建，不是第三方折腾出来的）。A 卡用户按上面五步走完仍起不来，
+> 把「引擎兼容性自检」的结果贴到 Issue 里，我来定位。
+
 ---
 
 ## 下载与安装（一步一步照着做）
+
+> ### ⚠️ 先确认你的系统
+> **本软件只支持 Windows 10 / 11（64 位）。**
+> **macOS 用不了**（引擎路径、快捷方式、进程管理都是 Windows 专用的，需要一次正经移植）——
+> **Mac 用户请先看下面的「macOS 用户请看这里」**，那里写了替代方案。
+> 显卡方面 **N 卡 / A 卡 / Intel 都能用**，但要下对引擎版本（见「显卡品牌」那一节）。
 
 全程约 10 分钟（不含下载时间）。
 **只想下棋、不要讲解功能的话，跳过第 3 步就行 —— 能省 4.4GB 的下载。**
@@ -150,19 +214,47 @@ GitHub 把下载文件都放在「发布 / Releases」里，认准**最上面那
 1. 打开 **<https://github.com/lightvector/KataGo/releases>**
 2. 找最新版本，往下滑到 **Assets**，下载**文件名里带 `windows` 的 `.zip`**
    （别下 `.tar.gz` —— 那是给 Linux / macOS 的）
+   - 显卡是 **NVIDIA** → 选 `cuda` 或 `trt` 开头的
+   - 显卡是 **AMD / Intel** → 选 `opencl` 开头的（任何品牌都能用）；
+     AMD 还可以选 `rocm7.13-gfx???`（要按 GPU 代号挑，见下）
+   - 只有 **核显 / 想用 CPU** → `eigen` 或 `eigenavx2`（慢，但一定能跑）
+   - **Mac** → 官方不提供 macOS 包，用 `brew install katago`（Metal 后端）
 3. 解压 → 得到一个 `katago` 文件夹
+
+> 拿不准下哪个？软件的「**设置 → 引擎兼容性自检 → 检查**」会告诉你
+> 当前引擎是哪个后端、你的显卡是什么牌子、两者配不配。
 
 **2.2 下载两个模型文件（权重）**
 
-1. 打开 **<https://katagotraining.org/>**
-2. 找到 **Networks** 那一栏，下载这两个：
+⚠️ **先看这条，不然很容易撞上一个「引擎直接退出」的坑**：
 
-| 文件 | 干什么用 |
-|---|---|
-| `b11c768nbt.bin.gz` | 算胜率、推荐点、形势、复盘（"强"模型） |
-| `b18c384nbt-humanv0.bin.gz` | **当 AI 对手**用（⚠️ 就是文件名带 `human` 的那个） |
+> KataGo 的权重是**分代际**的，引擎只认自己那一代和更早的：
+>
+> | 权重代际 | 需要引擎 |
+> |---|---|
+> | **transformer**（`kata1-tf3-…`，训练站现在**最新的一批都是这个**） | **v1.17.0 以上** |
+> | `b28` 系列 | v1.14.0 以上 |
+> | `b18c384nbt` 系列 | v1.13.0 以上 |
+>
+> 训练站 **2026-09-15 公告：已停用 v1.18.0 之前的引擎**。
+> 所以：**下载最新权重时，引擎必须是 v1.18.0 或更新**（我们实测 v1.18.1 / v1.18.2 都能
+> 正常加载最新的 transformer 权重）。版本对不上时 KataGo 会**直接退出**，
+> —— 本软件会把这个原因显示在棋盘中央的提示框里，照着换一份就行。
+
+1. 打开 **<https://katagotraining.org/>**
+2. 找到 **Networks** 那一栏。**推荐的做法**：去
+   <https://github.com/lightvector/KataGo/releases> 最新那条 Release 的 Assets 里
+   找随附的权重 —— 那些是**和该版本引擎配套**的，下下来必定能用。
+3. 你需要两份：
+
+| 用途 | 叫什么 | 说明 |
+|---|---|---|
+| 算胜率、推荐点、形势、复盘（"强"模型） | 最新最强的那个（如 `kata1-tf3-…`，或随发布附带的 `b18c384nbt` / `b11c768nbt`） | 不带 `human` 字样的那个 |
+| **当 AI 对手**用 | `b18c384nbt-humanv0.bin.gz` | ⚠️ 文件名必须带 **`human`** |
 
 > ⚠️ 这两个 `.bin.gz` 看着像压缩包，但 **不要解压** —— 程序自己会读。
+> ⚠️ **对弈权重一定得用带 `human` 的那个**：拿普通权重去当对手，引擎会直接报错退出
+> （它要读人类段位档 `humanSLProfile`）。
 
 **2.3 摆对位置**
 
