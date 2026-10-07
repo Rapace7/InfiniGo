@@ -331,6 +331,17 @@ It's probably running on CPU — the official Windows CUDA build ships **without
 CUDA runtime. Run `llama-server.exe --list-devices`; if it prints `none`, download the
 matching `cudart-*.zip` from the same llama.cpp release and drop the DLLs next to the exe.
 
+**Recommended moves stopped showing, or the "computing… N" line above the board
+freezes and nothing responds?**
+Click **Refresh** next to the engine lamps in the top bar. It releases the stuck
+analysis, re-queues it, re-checks the engine, and restarts the engine if it is dead.
+
+**Why does the move I just played show "…" instead of a number?**
+It is still computing. Numbers appear **only once the search has settled, and never
+change after that** — on purpose: the engine reports partial results every 0.25 s, and
+showing those would make the same number jump around. Lower "search depth" in the bottom
+bar if you want numbers sooner.
+
 **Where are my games?** In `records\` next to the app.
 
 **Can I redistribute it bundled with the model?** Please don't — LoGos is licensed for
