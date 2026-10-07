@@ -8,13 +8,6 @@ contextBridge.exposeInMainWorld('api', {
   /* 当前版本号（如 '0.1.1'）。界面显示在「帮助」面板上 —— 用户靠它判断要不要更新。 */
   appVersion: () => ipcRenderer.invoke('app:version'),
 
-  /* ★ 分析链路事件日志（2026-10-07 新增）：把链路关键决定按时间写进
-     <程序目录>\engine-logs\<时间戳>-分析链路.log。
-     为什么要它：用户遇到的是**偶发**卡住，且他那边没有调试器；
-     把过程落盘之后，卡住一次就能把整条链复原出来。 */
-  diagLog: line => ipcRenderer.invoke('diag:log', line),
-  diagPath: () => ipcRenderer.invoke('diag:path'),
-
   /* ★ 引擎后端自检（2026-10-07 新增）：
      → Promise<{ backend: { ok, raw, name, brand, downloads, version }, gpu: { brand, name }, warn }>
      backend.raw = kataGo 自报的后端（cuda / opencl / metal / rocm / eigen …）

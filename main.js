@@ -18,6 +18,19 @@ const readline = require('readline');
 const { spawn, execFileSync } = require('child_process');
 const http = require('http');       // LoGos 靠 HTTP 说话（llama-server 托管）
 
+/* ---------- 轻量化：给 Chromium 的缓存设上限（2026-10-07 用户要求） ----------
+   用户的要求原话：「我们的软件要尽量轻量化，尽量不像手机 APP 一样一直产生垃圾文件」。
+   审计了一遍写盘的地方，`userdata\` 里 8.1 MB 有 7.9 MB 是 **GPU / 着色器缓存**
+   （GrShaderCache 4.8 + GPUCache 1.6 + ShaderCache 0.5 + Dawn* 1.1）——
+   它们是 Chromium 自己管的，会随驱动升级重新生成。这里把**磁盘缓存**压到 32 MB：
+   本软件不联网、没有网页资源，HTTP 缓存本来就近乎为零，这个上限只当保险绳用
+   （万一将来加了什么联网功能，也不会失控）。
+   ⚠️ 必须在 app ready **之前**设置，ready 之后开关就不生效了。 */
+try {
+  app.commandLine.appendSwitch('disk-cache-size', String(32 * 1024 * 1024));   // 32 MB
+  app.commandLine.appendSwitch('media-cache-size', String(8 * 1024 * 1024));   // 8 MB（音效就那么几个）
+} catch (e) { /* 设不上不影响运行 */ }
+
 /* ---------- 「基准目录」：开发模式 vs 打包模式 ----------
    ★ 这两种模式下"东西该放哪"完全不同，必须分开：
      · 开发模式（`start.bat` / `npm start`）：代码就在项目目录，一切以 __dirname 为基准。
@@ -1313,41 +1326,29 @@ ipcMain.handle('records:openDir', () => { shell.openPath(RECORDS_DIR); return { 
      下载完从文件名看不出新旧，所以必须能在软件里看到当前版本。 */
 ipcMain.handle('app:version', () => app.getVersion());
 
-/* ---------- 分析链路事件日志（2026-10-07 新增，为定位"偶发卡住"） ----------
-   为什么要落盘而不是只打印在控制台：用户遇到的是**偶发**问题，而且他那边没有调试器。
-   把链路上每次关键决定（发了请求 / 结果被丢弃 / 该重算却没算 / 自愈触发…）
-   按时间写进文件，卡住之后直接读文件就能复原整个过程 —— 不用再靠"让他读状态栏"。
-
-   只记**关键节点**，不记每次都发生的琐事（否则文件会涨到没法看）：
-     · schedule / run 的进入与判断结果
-     · 请求发出、失败、被取消
-     · applyAnalysis 的返回值（有没有真上屏）
-     · 遍历循环为什么退出、为什么跳过
-   文件：engine-logs\<时间戳>-分析链路.log，每次启动一个（和引擎日志同一目录）。 */
-let diagLogFile = null;
-function diagLogPath() {
-  if (diagLogFile) return diagLogFile;
+/* ---------- 引擎日志的自动限量（2026-10-07 新增，用户要求「别像手机 APP 一样堆垃圾」） ----------
+   每次启动引擎，KataGo 都会在 engine-logs\ 里写一个自己的日志（每次 2 个文件）。
+   单次很小（几 KB），但**会无限累积** —— 玩一年就是上千个文件。
+   这里在启动时顺手清理：只保留最近的 N 个，更老的直接删。
+   ⚠️ 只删**引擎自己写的**（`<时间戳>-XXXXXXXX.log`）。
+      分析链路日志（`*-分析链路.log`）已经在 v0.1.18 撤掉了，不再产生。 */
+const ENGINE_LOG_KEEP = 20;      // 保留最近 20 个（够查最近几次启动的问题）
+function pruneEngineLogs() {
   try {
-    fs.mkdirSync(LOG_DIR, { recursive: true });
-    const d = new Date();
-    const p = n => String(n).padStart(2, '0');
-    const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
-    diagLogFile = path.join(LOG_DIR, stamp + '-分析链路.log');
-  } catch (e) { diagLogFile = ''; }
-  return diagLogFile;
+    if (!fs.existsSync(LOG_DIR)) return;
+    const files = fs.readdirSync(LOG_DIR)
+      /* ⚠️ 只认引擎自己写的那个格式：`20261007-190037-B22CAB85.log`
+         （日期8位 - 时间6位 - 十六进制，只有**一个**连字符分隔日期和时间）。
+         第一版我把正则写成 /-\d{8}-\d{6}-/i（要求两个连字符），结果**一个都匹配不上** →
+         限量静默失效。文件名格式这种东西一定要**拿真实文件名验一遍**再写正则。 */
+      .filter(n => /^\d{8}-\d{6}-[0-9A-F]+\.log$/i.test(n))
+      .map(n => ({ n, t: fs.statSync(path.join(LOG_DIR, n)).mtimeMs }))
+      .sort((a, b) => b.t - a.t);
+    for (const f of files.slice(ENGINE_LOG_KEEP)) {
+      try { fs.unlinkSync(path.join(LOG_DIR, f.n)); } catch (e) { /* 忽略 */ }
+    }
+  } catch (e) { /* 清理失败不影响启动 */ }
 }
-ipcMain.handle('diag:log', (_e, line) => {
-  const f = diagLogPath();
-  if (!f) return { ok: false };
-  try {
-    const d = new Date();
-    const t = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
-      + ':' + String(d.getSeconds()).padStart(2, '0') + '.' + String(d.getMilliseconds()).padStart(3, '0');
-    fs.appendFileSync(f, t + ' ' + String(line) + '\n', 'utf8');
-    return { ok: true };
-  } catch (e) { return { ok: false, error: String(e.message) }; }
-});
-ipcMain.handle('diag:path', () => diagLogPath());
 
 
 /* 导入棋谱（2026-10-04 用户要求）：从电脑里挑 SGF，复制进棋谱库。
@@ -1701,6 +1702,9 @@ ipcMain.handle('records:setNote', (_e, name, note) => {
 });
 
 app.whenReady().then(() => {
+  /* ★ 启动时顺手清理引擎日志（只留最近 20 个）—— 用户要求「别像手机 APP 一样堆垃圾」。
+     放在最前面：它不依赖任何窗口，失败也不影响启动。 */
+  pruneEngineLogs();
   /* 一次性工具：electron . --make-shortcut → 建好桌面快捷方式就退出（不开窗口、不启动引擎）。
      给「重装 / 换电脑 / 桌面图标丢了」用，平时由设置面板里的按钮触发。 */
   if (process.env.RAPACEGO_MAKE_SHORTCUT === '1') {
