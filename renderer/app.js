@@ -2800,6 +2800,23 @@ const HINT_MIN_VISITS = 20;
    ⚠️ 别调太小：调成 5 秒会在深档位下把正常请求误判成超时，反而让分析一直在重排。 */
 const ANALYZE_TIMEOUT_MS = 25000;
 
+/* ★ 分析链路的轻量埋点（2026-10-07 新增）。
+   为什么要它：用户报「AI 落子后马上悔棋，选点/形势有时卡住不显示」，
+   但标准时序在测试环境里跑十轮都不卡 —— 说明是**竞态**，光看界面复现不了。
+   有这组计数就能在卡住的那一刻回答"它到底卡在哪一步"：
+     start    = 进入一轮分析循环
+     okCount  = 这一轮里成功算完几次局面
+     failEarly= runAnalysis 开头的提前 return（分别是 scoreBusy / reviewBusy / 引擎没就绪 / busy）
+     failOnce = runAnalysisOnce 返回 false（出错 / 被取消 / 超时）
+     breakAt  = 循环为什么退出（guard 用尽 / 换局 / 数子 / 复盘 / 引擎掉了 / 算失败）
+     skipHuge = 队列里那些「at 已经大于手数」被跳过的次数
+   只读写几个数字，不改任何行为（Ctrl+Shift+D 会把它打出来）。 */
+const anaDiag = {
+  start: 0, okCount: 0, failEarly: { score: 0, review: 0, notReady: 0, busy: 0 },
+  failOnce: 0, breakAt: {}, skipHuge: 0, lastFailWhy: '', lastAt: 0,
+  note(why) { this.breakAt[why] = (this.breakAt[why] || 0) + 1; this.lastFailWhy = why; this.lastAt = Date.now(); },
+};
+
 /* 连续超时计数（成功一次就归零）。超时后要主动重排一次，但不能无限重排 ——
    引擎真挂了的时候，无限重排会变成每 25 秒一次的无效空转，日志和界面都在刷。 */
 let anaTimeouts = 0;
@@ -2931,6 +2948,15 @@ function truncateAnalysisTo(len) {
   /* candAt / ownAt 也别指着不存在的局面，否则候选点和形势雾会被当成过期的画淡。 */
   if (state.candAt > len) state.candAt = -1;
   if (state.ownAt > len) { state.ownership = null; state.ownAt = -1; }
+  /* ★★ shownAt 也要跟着退（2026-10-07 新增，治「悔棋后选点/形势卡住不动」）。
+     为什么必须有这一句：`shownAt` 是「屏幕上这批结果算的是第几手」。
+     悔棋把局面变短之后，若 shownAt 还指着一个**已经不存在的手数**，
+     `runAnalysis` 的判据 `shownAt !== cur` 就变成一个**永远为假**的比较 ——
+     它以为当前局面已经算过、直接去补历史欠账，而当前局面**永远不再重算**：
+     表现就是候选点 / 胜率 / 形势雾**停在旧值不再更新**（用户报的"卡住不显示"）。
+     原来只退了 candAt / ownAt，漏了 shownAt（它不在 state 上，是个模块级变量，
+     所以早先几次审查都没扫到）。 */
+  if (shownAt > len) shownAt = -1;
   /* 曲线 / 手数列表不用在这里刷 —— 调用方紧接着就 syncUI()，那里会重画。
      在这里刷等于每悔棋一次多两次全量重绘。 */
 }
@@ -2972,37 +2998,31 @@ let gameGen = 0;
 let anaReqGen = -1;       // 当前在飞的那个**分析**请求属于哪一代（onProgress 用）
 
 async function runAnalysis() {
+  anaDiag.start++;
   /* ★ 数子期间**不发分析请求**：否则新分析会在 main.js 里 terminateId 掐掉数子查询，
      数子就会拿到半成品或直接失败（用户报过「点完数子按钮好像没发生什么」）。
      数子跑完会主动补一次分析，见 runScore 的 finally。 */
-  if (scoreBusy) return;
+  if (scoreBusy) { anaDiag.failEarly.score++; anaDiag.note('数子中提前return'); return; }
   /* ★ 复盘同理：复盘是一次「整盘逐手」的长请求，被分析掐掉就白跑了（可能要等两分钟）。
      复盘结束后会主动刷一次界面，见 runReview。 */
-  if (reviewBusy) return;
-  if (!engineReady) return;                      // 引擎还没就绪：等 onStatus 触发 syncUI 再来
-  if (anaBusy) { anaPoke = true; return; }       // ★ 不并发，只登记「还有活要干」
+  if (reviewBusy) { anaDiag.failEarly.review++; anaDiag.note('复盘/讲解中提前return'); return; }
+  if (!engineReady) { anaDiag.failEarly.notReady++; anaDiag.note('引擎未就绪提前return'); return; }
+  if (anaBusy) { anaPoke = true; anaDiag.failEarly.busy++; return; }   // ★ 不并发，只登记「还有活要干」
   anaBusy = true;
   anaBusySince = Date.now();                     // ★ 给「刷新」按钮判断卡死用
   const gen = gameGen;                            // ★ 这一轮属于哪一代
   try {
     /* 上限只是防止意外死循环（正常一轮只会跑十几次）。 */
     for (let guard = 0; guard < 500; guard++) {
-      if (scoreBusy || reviewBusy || !engineReady) break;
-      if (gen !== gameGen) break;                 // ★ 换局 / 换棋谱了：剩下的欠账全部作废
+      if (scoreBusy || reviewBusy || !engineReady) { anaDiag.note('数子/复盘/引擎掉了 中断循环'); break; }
+      if (gen !== gameGen) { anaDiag.note('换局中断循环'); break; }   // ★ 换局 / 换棋谱了：剩下的欠账全部作废
 
       /* ① 先算**当前看着的局面** —— 胜率条 / 候选点 / 形势雾要它上屏（最高优先）。 */
       const cur = state.viewAt;
       if (shownAt !== cur || anaForceCur) {
         const ok = await runAnalysisOnce(cur);
-        /* ★ 只在**成功**之后才清掉「强制重算」这个意图（2026-10-06 审查发现）。
-           原来是在发请求之前就清：这一趟要是出错（not ok → break），
-           意图就丢了 —— 而 `history[cur]` 多半已经有值，
-           `scheduleAnalysis` 的去重条件（`typeof history[at] !== 'number'`）也不会再排队，
-           于是棋盘上的胜率 / 形势雾**一直停在旧值**，要等下一次落子才更新。
-           典型触发：改「计算深度」、切「形势显示」、悔棋之后 —— 这三处都是靠它强制重算当前局面的。
-           留在 true 不会空转：每次重试都要等一次新的 schedule（不是死循环）。 */
-        if (ok) anaForceCur = false;
-        if (!ok) break;                          // 引擎没就绪 / 出错 / 被取消：别死循环
+        if (ok) { anaDiag.okCount++; anaForceCur = false; }
+        else { anaDiag.failOnce++; anaDiag.note('runAnalysisOnce 返回 false'); break; }
         continue;
       }
 
@@ -3016,7 +3036,7 @@ async function runAnalysis() {
          **JS 数组会因此扩容**（实测 7 手的 history 长度涨到 11）。
          这些幽灵数据让 anaBusy 长期占着（busy 卡在 true），
          真正的当前局面再也排不上队 → **用户看到的现象就是「悔棋后分析停住了」**。 */
-      if (at > state.moves.length) continue;
+      if (at > state.moves.length) { anaDiag.skipHuge++; continue; }
       if (typeof state.history[at] === 'number') continue;   // 已经补上了（比如刚作为当前局面算过）
       if (at === cur) continue;                  // 当前局面刚算过
       await runAnalysisOnce(at);
@@ -3088,7 +3108,20 @@ async function runAnalysisOnce(at) {
   /* ★ 被 cancel 掐掉的结果是**搜索中途的半成品**（visits 很少、胜率还没收敛）——
      绝不能上屏，否则胜率条会瞬间跳到一个极端值、过几秒又弹回来
      （用户实测报过这个现象；根因是 runScore 里的 window.api.cancel()）。 */
-  if (res && res.cancelled) return false;
+  if (res && res.cancelled) {
+    /* ★★ 自愈（2026-10-07 新增）：如果被掐掉的正是**当前局面**那一趟，
+        那么"重算当前局面"这个意图必须留着、而且要**主动重排一次**。
+        为什么：`runAnalysis` 拿到 false 就 break，`anaBusy` 随即放开；
+        而 anaForceCur 虽然还是 true，但**没有任何东西会再触发一次 schedule** ——
+        如果这一刻正好没有落子/回看这类操作，分析就永远停在那儿
+        （表现就是用户报的「选点 / 形势突然卡住不显示」，而且不会自己好）。
+        典型触发：数子（runScore 里会 cancel）与悔棋/落子挤在一起的时候。 */
+    if (at === state.viewAt) {
+      anaForceCur = true;
+      if (!anaTimer) anaTimer = setTimeout(runAnalysis, 120);
+    }
+    return false;
+  }
   if (!res || res.error) {
     const timedOut = !!(res && res.error && res.error.indexOf('超时') >= 0);
     if (timedOut) {
@@ -4760,7 +4793,9 @@ window.addEventListener('keydown', e => {
         + (scoreBusy ? '·数子中' : '')
         + (reviewBusy ? '·复盘/讲解中' : '')
         + '·引擎: ' + (engineReady ? '就绪' : (engStates.analyze === 'loading' ? '加载中' : '未就绪'))
-        + (anaTimeouts ? ('·超时' + anaTimeouts + '次') : ''));
+        + (anaTimeouts ? ('·超时' + anaTimeouts + '次') : '')
+        + '·链路: 轮' + anaDiag.start + '/成功' + anaDiag.okCount + '/空跑' + anaDiag.failOnce
+        + (anaDiag.lastFailWhy ? ('·最近中断=' + anaDiag.lastFailWhy) : ''));
       break;
     }
     case 'ArrowLeft':  e.preventDefault(); $('btn-prev').click(); break;
