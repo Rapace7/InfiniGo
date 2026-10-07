@@ -1,7 +1,7 @@
 {
   "name": "rapacego",
   "productName": "RapaceGo",
-  "version": "0.1.14",
+  "version": "0.1.17",
   "description": "玄清围弈 —— 跟 AI 下棋、看客观数据、听本地模型讲棋",
   "author": "Rapace7",
   "main": "main.js",

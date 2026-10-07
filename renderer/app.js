@@ -2798,6 +2798,35 @@ const HINT_MIN_VISITS = 20;
    ⚠️ 别调太小：调成 5 秒会在深档位下把正常请求误判成超时，反而让分析一直在重排。 */
 const ANALYZE_TIMEOUT_MS = 25000;
 
+/* ★ 分析链路的轻量埋点（2026-10-07 新增）。
+   为什么要它：用户报「AI 落子后马上悔棋，选点/形势有时卡住不显示」，
+   但标准时序在测试环境里跑十轮都不卡 —— 说明是**竞态**，光看界面复现不了。
+   有这组计数就能在卡住的那一刻回答"它到底卡在哪一步"：
+     start    = 进入一轮分析循环
+     okCount  = 这一轮里成功算完几次局面
+     failEarly= runAnalysis 开头的提前 return（分别是 scoreBusy / reviewBusy / 引擎没就绪 / busy）
+     failOnce = runAnalysisOnce 返回 false（出错 / 被取消 / 超时）
+     breakAt  = 循环为什么退出（guard 用尽 / 换局 / 数子 / 复盘 / 引擎掉了 / 算失败）
+     skipHuge = 队列里那些「at 已经大于手数」被跳过的次数
+   只读写几个数字，不改任何行为（Ctrl+Shift+D 会把它打出来）。 */
+const anaDiag = {
+  start: 0, okCount: 0, failEarly: { score: 0, review: 0, notReady: 0, busy: 0 },
+  failOnce: 0, breakAt: {}, skipHuge: 0, lastFailWhy: '', lastAt: 0,
+  note(why) { this.breakAt[why] = (this.breakAt[why] || 0) + 1; this.lastFailWhy = why; this.lastAt = Date.now(); },
+};
+
+/* ★★ 把分析链路的关键决定**写进日志文件**（2026-10-07 新增，为定位偶发卡住）。
+   为什么要落盘：用户遇到的是偶发问题、他那边没有调试器，
+   而"读状态栏"只能看到**当下**那一瞬（`选点: 还没算过`），看不出**它是怎么走到那一步的**。
+   把过程写下来，卡住一次就能把整条链复原：谁排的队、请求发没发、结果为什么被丢。
+   ⚠️ 只记关键节点 —— 每次都记会把文件写成没法看的样子。 */
+function alog(msg) {
+  try {
+    if (window.api && window.api.diagLog) window.api.diagLog(msg).catch(() => { });
+  } catch (e) { /* 记日志绝不能影响分析本身 */ }
+  console.log('[分析链路] ' + msg);
+}
+
 /* 连续超时计数（成功一次就归零）。超时后要主动重排一次，但不能无限重排 ——
    引擎真挂了的时候，无限重排会变成每 25 秒一次的无效空转，日志和界面都在刷。 */
 let anaTimeouts = 0;
@@ -2869,11 +2898,16 @@ function scheduleAnalysis(delay, force) {
   /* ★ 未开局：**一次分析都不发**（用户要求「胜率条五五开不动」）。
      这是「不动」的根子 —— 数字由 syncUI 画成中性，而且没有请求来覆盖它。
      注意要放在入队**之前**：否则会在队列里留一条永远没人处理的欠账。 */
-  if (state.noGame) return;
+  if (state.noGame) { alog('schedule 未开局 → 不发'); return; }
   const at = state.viewAt;
-  if (force) anaForceCur = true;
+  const why = [];
+  if (force) { anaForceCur = true; why.push('force'); }
   /* 入队（去重）。试下（草稿）里的局面不记 —— 那些手等会儿会被整体丢掉，算了也是白算。 */
-  if (!(state.draft && at > state.draft.from)
+  const draftSkip = (state.draft && at > state.draft.from);
+  if (draftSkip) why.push('草稿内跳过入队');
+  else if (typeof state.history[at] === 'number') why.push('history已有→不入队');
+  else if (anaQueue.indexOf(at) >= 0) why.push('队列已有');
+  if (!draftSkip
     && typeof state.history[at] !== 'number'
     && anaQueue.indexOf(at) < 0) {
     anaQueue.push(at);
@@ -2887,6 +2921,14 @@ function scheduleAnalysis(delay, force) {
      因为瓶颈是「引擎切换到一个新局面的第一批结果本身要约 0.8 秒」（要重建搜索树）。
      既然没有收益，就不留这个异步竞态（cancel 晚一步到主进程会误杀刚发出的新请求）。 */
   anaTimer = setTimeout(runAnalysis, delay === undefined ? 200 : delay);
+  /* ★ 关键节点记一行：这一笔排了没有、为什么没排、当前各处状态。
+     卡住之后回看这一段，就能知道"那一刻到底有没有人动手"。 */
+  alog('schedule at=' + at + ' delay=' + (delay === undefined ? 200 : delay)
+    + ' 入队=' + (why.some(w => w.indexOf('→') >= 0 || w === '队列已有') ? '否(' + why.join(',') + ')' : '是')
+    + ' q=[' + anaQueue.join(',') + '] shownAt=' + shownAt + ' candAt=' + state.candAt
+    + ' busy=' + anaBusy + ' force=' + anaForceCur + ' hist[' + at + ']=' + (typeof state.history[at] === 'number' ? '有' : '无'));
+  /* ★ 顺手挂一次「卡住自愈」检查：只在「算过但没上屏」时才会真的排定时器 */
+  scheduleStallRecovery();
 }
 
 /* 换了棋谱 / 开了新局 → 旧的欠账和「已上屏」标记全部作废 */
@@ -2894,7 +2936,61 @@ function resetAnalysisState() {
   anaQueue = [];
   shownAt = -1;
   clearTimeout(anaTimer);
+  clearTimeout(anaStallTimer); anaStallTimer = null;
+  anaStallWatched = -1; anaStallTries = 0;
   gameGen++;        // ★ 换局 / 换棋谱：作废在飞的那次分析（见 gameGen 的注释）
+}
+
+/* ★★ 自愈网：「算过但没上屏」的状态卡住时，自己再算一次（2026-10-07 新增）。
+   治的是什么：`shownAt`（算过）与 `candAt`（真上屏了）**不一致**时，
+   `runAnalysis` 会以为当前局面已算过而跳过它、`scheduleAnalysis` 又会因
+   `history[at]` 有值而去重 —— 两头都不动手，那个局面就永远停在「计算中… N」上。
+   （根因已在 `runAnalysisOnce` 修掉：只有 `applyAnalysis` 真上屏才记 shownAt。
+     这里再兜一道，万一还有别的路径造成同样不一致，它能自己纠正，
+     用户不用靠"再落一手"把它撞好。）
+
+   为什么用**一次性定时器**而不是常驻轮询：只在"看起来卡了"的时候才排一次，
+   自限、不空转。 */
+let anaStallTimer = null;
+let anaStallWatched = -1;       // 正在自愈哪个手数（-1 = 没有）
+let anaStallTries = 0;          // 这一手已经自愈过几次
+const ANA_STALL_MAX_TRIES = 20; // 上限（防死循环）；每次间隔 6 秒，20 次 ≈ 2 分钟
+function scheduleStallRecovery() {
+  const cur = state.viewAt;
+  if (state.noGame || cur <= 0) return;
+  if (state.viewAt !== state.moves.length) return;   // 回看历史时不算卡（那时本来不画选点）
+  if (shownAt !== cur || state.candAt === cur) {
+    /* 没卡（要么还没算、要么已上屏）→ 清掉这一手的计数，下次卡住能从头再来 */
+    if (anaStallWatched === cur) { anaStallWatched = -1; anaStallTries = 0; }
+    return;
+  }
+  if (anaStallWatched !== cur) { anaStallWatched = cur; anaStallTries = 0; }
+  /* ★★ 反复尝试，不是"只试一次"（2026-10-07 踩的坑）。
+     第一版写的是 `if (anaStallWatched === cur) return;` —— 想避免重复排定时器，
+     结果**卡住之后这个值一直等于 cur**，于是之后每次 scheduleAnalysis 都在这里 return，
+     自愈定时器**再也不会排**：第一次没救回来就永久卡住。
+     用户实测就是这个现象（「过了很久也没修好，没用自己修」）。
+     正解：卡住期间**每 6 秒重试一次**，直到好为止（有次数上限防死循环）。 */
+  if (anaStallTries >= ANA_STALL_MAX_TRIES) return;
+  if (anaStallTimer) return;                     // 已经有一个在等着了
+  anaStallWatched = cur;
+  anaStallTries++;
+  anaStallTimer = setTimeout(() => {
+    anaStallTimer = null;
+    if (state.viewAt !== cur || state.candAt === cur) { anaStallWatched = -1; anaStallTries = 0; return; }   // 期间自己好了
+    alog('★ 自愈第 ' + anaStallTries + ' 次：检测到「算过但没上屏」（shownAt=' + shownAt
+      + ' candAt=' + state.candAt + ' viewAt=' + cur + '）→ 强制重算');
+    console.warn('[分析] 自愈第 ' + anaStallTries + ' 次：重算第 ' + cur + ' 手');
+    anaDiag.note('自愈：算过但没上屏');
+    anaForceCur = true;
+    scheduleAnalysis(0, true);
+    /* ★★ 关键：**自己续排下一次**（2026-10-07 踩的坑）。
+       不能指望用户再操作一次来触发 scheduleAnalysis —— 卡住的时候他往往正盯着屏幕等，
+       **不会再点任何东西**，那样自愈就只试了一次、失败一次就再也不动。
+       （第一版就是这么错的：写成"同一手数只排一次"，结果卡住后永远不再排。） */
+    anaStallWatched = -1;          // 让下一次判断重新走一遍
+    scheduleStallRecovery();       // 若仍然卡着，6 秒后再来一次
+  }, 6000);
 }
 
 /* ★★ 悔棋 / 停一手 / 任何「局面变短」的操作之后必须调用（2026-10-06 实测定位）。
@@ -2929,6 +3025,15 @@ function truncateAnalysisTo(len) {
   /* candAt / ownAt 也别指着不存在的局面，否则候选点和形势雾会被当成过期的画淡。 */
   if (state.candAt > len) state.candAt = -1;
   if (state.ownAt > len) { state.ownership = null; state.ownAt = -1; }
+  /* ★★ shownAt 也要跟着退（2026-10-07 新增，治「悔棋后选点/形势卡住不动」）。
+     为什么必须有这一句：`shownAt` 是「屏幕上这批结果算的是第几手」。
+     悔棋把局面变短之后，若 shownAt 还指着一个**已经不存在的手数**，
+     `runAnalysis` 的判据 `shownAt !== cur` 就变成一个**永远为假**的比较 ——
+     它以为当前局面已经算过、直接去补历史欠账，而当前局面**永远不再重算**：
+     表现就是候选点 / 胜率 / 形势雾**停在旧值不再更新**（用户报的"卡住不显示"）。
+     原来只退了 candAt / ownAt，漏了 shownAt（它不在 state 上，是个模块级变量，
+     所以早先几次审查都没扫到）。 */
+  if (shownAt > len) shownAt = -1;
   /* 曲线 / 手数列表不用在这里刷 —— 调用方紧接着就 syncUI()，那里会重画。
      在这里刷等于每悔棋一次多两次全量重绘。 */
 }
@@ -2970,38 +3075,41 @@ let gameGen = 0;
 let anaReqGen = -1;       // 当前在飞的那个**分析**请求属于哪一代（onProgress 用）
 
 async function runAnalysis() {
+  anaDiag.start++;
   /* ★ 数子期间**不发分析请求**：否则新分析会在 main.js 里 terminateId 掐掉数子查询，
      数子就会拿到半成品或直接失败（用户报过「点完数子按钮好像没发生什么」）。
      数子跑完会主动补一次分析，见 runScore 的 finally。 */
-  if (scoreBusy) return;
+  if (scoreBusy) { anaDiag.failEarly.score++; anaDiag.note('数子中提前return'); alog('run 数子中 → 不发'); return; }
   /* ★ 复盘同理：复盘是一次「整盘逐手」的长请求，被分析掐掉就白跑了（可能要等两分钟）。
      复盘结束后会主动刷一次界面，见 runReview。 */
-  if (reviewBusy) return;
-  if (!engineReady) return;                      // 引擎还没就绪：等 onStatus 触发 syncUI 再来
-  if (anaBusy) { anaPoke = true; return; }       // ★ 不并发，只登记「还有活要干」
+  if (reviewBusy) { anaDiag.failEarly.review++; anaDiag.note('复盘/讲解中提前return'); alog('run 复盘/讲解中 → 不发'); return; }
+  if (!engineReady) { anaDiag.failEarly.notReady++; anaDiag.note('引擎未就绪提前return'); alog('run 引擎未就绪 → 不发'); return; }
+  if (anaBusy) { anaPoke = true; anaDiag.failEarly.busy++; alog('run 已有请求在飞 → 只登记 poke'); return; }
   anaBusy = true;
   anaBusySince = Date.now();                     // ★ 给「刷新」按钮判断卡死用
   const gen = gameGen;                            // ★ 这一轮属于哪一代
+  alog('run 开始 代=' + gen + ' q=[' + anaQueue.join(',') + '] viewAt=' + state.viewAt
+    + ' shownAt=' + shownAt + ' candAt=' + state.candAt + ' force=' + anaForceCur);
   try {
     /* 上限只是防止意外死循环（正常一轮只会跑十几次）。 */
     for (let guard = 0; guard < 500; guard++) {
-      if (scoreBusy || reviewBusy || !engineReady) break;
-      if (gen !== gameGen) break;                 // ★ 换局 / 换棋谱了：剩下的欠账全部作废
+      if (scoreBusy || reviewBusy || !engineReady) { anaDiag.note('数子/复盘/引擎掉了 中断循环'); alog('run 循环中断：数子/复盘/引擎掉了'); break; }
+      if (gen !== gameGen) { anaDiag.note('换局中断循环'); alog('run 循环中断：换局/换棋谱（代 ' + gen + '→' + gameGen + '）'); break; }   // ★ 换局 / 换棋谱了：剩下的欠账全部作废
 
       /* ① 先算**当前看着的局面** —— 胜率条 / 候选点 / 形势雾要它上屏（最高优先）。 */
       const cur = state.viewAt;
       if (shownAt !== cur || anaForceCur) {
         const ok = await runAnalysisOnce(cur);
-        /* ★ 只在**成功**之后才清掉「强制重算」这个意图（2026-10-06 审查发现）。
-           原来是在发请求之前就清：这一趟要是出错（not ok → break），
-           意图就丢了 —— 而 `history[cur]` 多半已经有值，
-           `scheduleAnalysis` 的去重条件（`typeof history[at] !== 'number'`）也不会再排队，
-           于是棋盘上的胜率 / 形势雾**一直停在旧值**，要等下一次落子才更新。
-           典型触发：改「计算深度」、切「形势显示」、悔棋之后 —— 这三处都是靠它强制重算当前局面的。
-           留在 true 不会空转：每次重试都要等一次新的 schedule（不是死循环）。 */
-        if (ok) anaForceCur = false;
-        if (!ok) break;                          // 引擎没就绪 / 出错 / 被取消：别死循环
+        if (ok) { anaDiag.okCount++; anaForceCur = false; }
+        else { anaDiag.failOnce++; anaDiag.note('runAnalysisOnce 返回 false'); alog('run 当前局面 at=' + cur + ' 这一趟没成功 → 退出循环'); break; }
         continue;
+      }
+      /* ★ 走到这里就说明「认为当前局面已算过」—— 这是最可疑的一条路，
+         因为如果 candAt 却没跟上，那这个局面就再也不会被重算。
+         记一行，卡住时一眼能看出来。 */
+      if (state.candAt !== cur) {
+        alog('★ run 认为已算过但 candAt=' + state.candAt + ' ≠ viewAt=' + cur
+          + '（跳过当前局面，去补欠账；若此处反复出现就是卡住的源头）');
       }
 
       /* ② 再补欠账：把队列里「还没有 history」的手数从旧到新算出来（只写 history，不动画面）。 */
@@ -3014,7 +3122,7 @@ async function runAnalysis() {
          **JS 数组会因此扩容**（实测 7 手的 history 长度涨到 11）。
          这些幽灵数据让 anaBusy 长期占着（busy 卡在 true），
          真正的当前局面再也排不上队 → **用户看到的现象就是「悔棋后分析停住了」**。 */
-      if (at > state.moves.length) continue;
+      if (at > state.moves.length) { anaDiag.skipHuge++; continue; }
       if (typeof state.history[at] === 'number') continue;   // 已经补上了（比如刚作为当前局面算过）
       if (at === cur) continue;                  // 当前局面刚算过
       await runAnalysisOnce(at);
@@ -3081,12 +3189,26 @@ async function runAnalysisOnce(at) {
 
   /* ★ 这一趟期间**换过局 / 换过棋谱** → 这次结果整体作废（一个字段都不写）。
      放在所有分支之前：连「记 history」都不做，那些手已经不属于现在这盘棋了。 */
-  if (gen !== gameGen) return false;
+  if (gen !== gameGen) { alog('once at=' + at + ' 作废：期间换过局（代 ' + gen + '→' + gameGen + '）'); return false; }
 
   /* ★ 被 cancel 掐掉的结果是**搜索中途的半成品**（visits 很少、胜率还没收敛）——
      绝不能上屏，否则胜率条会瞬间跳到一个极端值、过几秒又弹回来
      （用户实测报过这个现象；根因是 runScore 里的 window.api.cancel()）。 */
-  if (res && res.cancelled) return false;
+  if (res && res.cancelled) {
+    /* ★★ 自愈（2026-10-07 新增）：如果被掐掉的正是**当前局面**那一趟，
+        那么"重算当前局面"这个意图必须留着、而且要**主动重排一次**。
+        为什么：`runAnalysis` 拿到 false 就 break，`anaBusy` 随即放开；
+        而 anaForceCur 虽然还是 true，但**没有任何东西会再触发一次 schedule** ——
+        如果这一刻正好没有落子/回看这类操作，分析就永远停在那儿
+        （表现就是用户报的「选点 / 形势突然卡住不显示」，而且不会自己好）。
+        典型触发：数子（runScore 里会 cancel）与悔棋/落子挤在一起的时候。 */
+    if (at === state.viewAt) {
+      anaForceCur = true;
+      if (!anaTimer) anaTimer = setTimeout(runAnalysis, 120);
+    }
+    alog('once at=' + at + ' 被取消（cancelled）→ 重排；viewAt=' + state.viewAt);
+    return false;
+  }
   if (!res || res.error) {
     const timedOut = !!(res && res.error && res.error.indexOf('超时') >= 0);
     if (timedOut) {
@@ -3113,6 +3235,8 @@ async function runAnalysisOnce(at) {
       $('eval-lead').textContent = engineNote || (res && res.error ? res.error : '');
       $('eval-lead-w').textContent = '';
     }
+    alog('once at=' + at + ' 失败返回 false：' + ((res && res.error) || '未知')
+      + '（引擎就绪=' + engineReady + ' viewAt=' + state.viewAt + '）');
     return false;
   }
   anaTimeouts = 0;                 // 有结果回来了 → 计数归零
@@ -3126,9 +3250,19 @@ async function runAnalysisOnce(at) {
     return true;
   }
 
-  /* 当前局面：上屏（applyAnalysis 里也会顺手记下这一手的胜率） */
-  applyAnalysis(res, at);
-  shownAt = at;
+  /* 当前局面：上屏（applyAnalysis 里也会顺手记下这一手的胜率）。
+     ★★ 2026-10-07 修的**真 bug**：原来这里无条件写 `shownAt = at`，
+        可 `applyAnalysis` 内部有提前 return（搜索量不够 / 报文与当前局面不符时直接返回）。
+        那样一来：**候选点没画上去，却被标记成"这个局面已经显示过了"** ——
+        而 `runAnalysis` 的判据是 `shownAt !== cur`，于是这个局面**永远不再重算**。
+        用户看到的就是「棋盘上方那行『计算中… N』定住不动、推荐点永远不出现」。
+        （实测证据：用户按 Ctrl+Shift+D 读出来的自检是
+          「看第2手·选点: 还没算过·搜索量: 200·请求: 空闲·空跑0」——
+          搜索量 200 说明请求发出去过、也回过进度，但 candAt 仍是 -1，
+          队列空、没有请求失败 → 只可能是"被当成已显示、于是不再算"。）
+        所以现在只认 `applyAnalysis` 真上屏了才记 shownAt。 */
+  if (applyAnalysis(res, at)) { shownAt = at; alog('once at=' + at + ' ✓ 上屏成功 candAt=' + state.candAt + ' 候选点=' + state.candidates.length + ' visits=' + ((res.root && res.root.visits) || 0)); }
+  else { alog('★ once at=' + at + ' 未上屏（applyAnalysis 返回 false）→ shownAt 不记，下轮会重算；visits=' + ((res.root && res.root.visits) || 0) + ' viewAt=' + state.viewAt); }
   draw();
   return true;
 }
@@ -3218,10 +3352,20 @@ function blackLeadFrom(p, at) {
 }
 
 /* p = 分析结果；at = 这是「第几手之后」的局面。
-   ★ 只对**当前看着的局面**调用（at === state.viewAt）—— 补历史欠账的结果不许走这里。 */
+   ★ 只对**当前看着的局面**调用（at === state.viewAt）—— 补历史欠账的结果不许走这里。
+   ★★ 返回值（2026-10-07 新增）：**真把东西画上屏了**才返回 true。
+     调用方（runAnalysisOnce）用它决定要不要把这一手记成「已显示」（shownAt）——
+     以前无条件记，于是"没画上屏也算显示过"，那个局面就再也不重算了。
+     ⚠️ 两个"没上屏"的情况都要返回 false：
+        ① 报文跟当前局面不符（at ≠ viewAt，比如请求期间用户又落了一子 / AI 应了一手）；
+        ② 搜索量还太少（< HINT_MIN_VISITS），候选点先不更新。 */
 function applyAnalysis(p, at) {
-  if (!p || !p.root) return;
+  if (!p || !p.root) return false;
   if (typeof at !== 'number') at = state.viewAt;
+  /* ① 报文与当前局面不符：这不是"当前局面的结果"，一个字段都不该写。
+     为什么必须挡：请求在飞的时候用户落子 / AI 应手，回来的报文属于**上一个**局面；
+     照它画候选点就会把别的局面的点画到当前棋盘上。 */
+  if (at !== state.viewAt) return false;
 
   /* 视角：以引擎返回的 currentPlayer 为准（权威）。
      引擎（RapaceGo/engine.cfg 里 reportAnalysisWinratesAs = SIDETOMOVE）返回的
@@ -3269,7 +3413,10 @@ function applyAnalysis(p, at) {
   const totalV = (p.root && p.root.visits) || 0;
   /* 「计算中… 320」要显示它 —— 放在门槛**之前**，这样搜索量还很低时也能看到它在涨 */
   state.rootVisits = totalV;
-  if (totalV < HINT_MIN_VISITS) return;        // 极低搜索量（<20）时数据纯噪声，先不更新
+  /* ② 极低搜索量（<20）时数据纯噪声，候选点先不更新 → **没上屏，返回 false**。
+     这一步很要紧：只有它返回 false，调用方才会把这一手记成"还没显示"、
+     下一轮重新算（否则这个局面永远停在"计算中…"上）。 */
+  if (totalV < HINT_MIN_VISITS) return false;
 
   /* 记下「第几手时黑方胜率多少」——胜率走势曲线与手数列表都靠它。
      试下（草稿）里下的手**不记**：那些手等会儿会被整体丢掉，写进曲线就是脏数据。
@@ -3297,6 +3444,7 @@ function applyAnalysis(p, at) {
   if (pick.length < 3) pick = usable;          // 可信点太少 → 放宽（宁可多给几个参考）
   state.candidates = pick.sort((a, b) => b.win - a.win).slice(0, 4);
   state.candAt = at;                           // 记下这批点是第几手的（draw 用它判断过期没）
+  return true;                                 // ★ 真上屏了 → 调用方可以记 shownAt
 }
 
 /* ---------------- AI 对弈 ---------------- */
@@ -4720,6 +4868,34 @@ $('cbox-edit').onclick = editComment;
 /* 用 e.code 判断，不用 e.key —— 中文输入法下字母键的 key 会变（本项目踩过同源的坑）。
    焦点在输入控件里时一律不拦截，免得选难度时按空格出意外。 */
 window.addEventListener('keydown', e => {
+  /* ★★ Ctrl+Shift+D：分析链路自检 —— 必须放在下面那道 `if (e.ctrlKey)` **之前**！
+     2026-10-07 踩到：原来把它写在下面的 `switch (e.code)` 里（还特意写在裸 `case 'KeyD'`
+     试下**前面**），但忘了 Ctrl 组合在更上面就被拦下了：
+         if (e.ctrlKey || e.metaKey) { if (KeyZ) 悔棋; return; }   ← 这里就 return 了
+     于是那个 case 是**死代码**，用户在卡住时按 Ctrl+Shift+D 一点反应都没有
+     （而他正是最需要这个自检的时候）。教训：**判断快捷键能不能到达，要看整条
+     早期 return 链，不能只看 switch 内部的顺序。**
+     ⚠️ 这个判断要放在「输入框里不拦截」那道检查**之前** ——
+        用户很可能正点着「计算深度」之类的控件，那时焦点就在输入控件上。 */
+  if (e.ctrlKey && e.shiftKey && e.code === 'KeyD') {
+    e.preventDefault();
+    const cur = state.viewAt, n = state.moves.length;
+    flash('分析自检·局面: ' + n + '手·看第' + cur + '手'
+      + '·选点: ' + (state.candAt < 0 ? '还没算过' : ('第' + state.candAt + '手算的, 差' + (cur - state.candAt)))
+      + '·搜索量: ' + state.rootVisits
+      + '·请求: ' + (anaBusy ? '在跑' : '空闲')
+      + (anaQueue.length ? ('·欠账' + anaQueue.length + '手') : '')
+      + (anaForceCur ? '·待重算' : '')
+      + (state.noGame ? '·未开局' : '')
+      + (scoreBusy ? '·数子中' : '')
+      + (reviewBusy ? '·复盘/讲解中' : '')
+      + '·引擎: ' + (engineReady ? '就绪' : (engStates.analyze === 'loading' ? '加载中' : '未就绪'))
+      + (anaTimeouts ? ('·超时' + anaTimeouts + '次') : '')
+      + '·链路: 轮' + anaDiag.start + '/成功' + anaDiag.okCount + '/空跑' + anaDiag.failOnce
+      + (anaDiag.lastFailWhy ? ('·最近中断=' + anaDiag.lastFailWhy) : ''));
+    return;
+  }
+
   const t = e.target;
   if (t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName)) return;
 
@@ -4737,30 +4913,6 @@ window.addEventListener('keydown', e => {
      键位（2026-10-04 用户指定）：T 推荐点 · Z 坐标 · M 手数 · Y 音效 · X 形势 · N 拟人落子 · D 试下。
      ⚠️ 改键位时**记得同步 index.html 里各开关名字后面的括号**，以及 title 提示。 */
   switch (e.code) {
-    /* ★ Ctrl+Shift+D：分析链路自检（2026-10-06 晚新增）。
-       用户报过「推荐点不显示 / 那行『计算中… N』定住不动」——
-       那种情况下光看界面分不清是哪一环断了。这个键把那几项关键内部状态打在状态栏上，
-       用户截图给我就能直接定位（不用装调试器、不用连调试端口）。
-       ⚠️ 必须放在下面 `case 'KeyD'`（试下）**前面** —— switch 是顺序匹配的，
-          放后面就永远轮不到它。
-       ⚠️ 只读，不改任何状态 —— 自检本身绝不能影响正在跑的分析。 */
-    case 'KeyD': {
-      if (!(e.ctrlKey && e.shiftKey)) break;
-      e.preventDefault();
-      const cur = state.viewAt, n = state.moves.length;
-      flash('分析自检·局面: ' + n + '手·看第' + cur + '手'
-        + '·选点: ' + (state.candAt < 0 ? '还没算过' : ('第' + state.candAt + '手算的, 差' + (cur - state.candAt)))
-        + '·搜索量: ' + state.rootVisits
-        + '·请求: ' + (anaBusy ? '在跑' : '空闲')
-        + (anaQueue.length ? ('·欠账' + anaQueue.length + '手') : '')
-        + (anaForceCur ? '·待重算' : '')
-        + (state.noGame ? '·未开局' : '')
-        + (scoreBusy ? '·数子中' : '')
-        + (reviewBusy ? '·复盘/讲解中' : '')
-        + '·引擎: ' + (engineReady ? '就绪' : (engStates.analyze === 'loading' ? '加载中' : '未就绪'))
-        + (anaTimeouts ? ('·超时' + anaTimeouts + '次') : ''));
-      break;
-    }
     case 'ArrowLeft':  e.preventDefault(); $('btn-prev').click(); break;
     case 'ArrowRight': e.preventDefault(); $('btn-next').click(); break;
     case 'Home':       e.preventDefault(); $('btn-first').click(); break;
