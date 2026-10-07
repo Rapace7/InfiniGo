@@ -571,18 +571,37 @@ function tryPlay(x, y, byAI) {
   // 提子后自己仍无气 → 自杀，非法
   if (group(b, x, y).libs.size === 0) return false;
 
-  /* 简单劫（三条**同时**成立才算）：①本手只提 1 子 ②落下的这颗子是**孤子**（没连己方子）
-     ③自己这块只剩一口气。
-     ★★ 2026-10-06 审查发现：原来漏了 ② —— 于是**倒扑被误判成劫**。
-     倒扑时落子是连着自己人的，对方回提会一口气提走 ≥2 子（局面并不重复），
-     那是完全合法、而且常常是唯一的好手 —— 被禁掉等于规则出错。
-     （人工与 AI 落子都走这里，所以 AI 也会跟着下错。）
-     实测证据见 _cdp_ko.mjs：A 组（倒扑）修前 koPoint 被错误设上、白方回提被拒。 */
-  const gSelf = group(b, x, y);
-  state.koPoint = (captured === 1 && gSelf.stones.length === 1 && gSelf.libs.size === 1)
-    ? { x: capAt.x, y: capAt.y } : null;
+  /* ★★★ 打劫（Ko）—— **照抄 KaTrain 的写法**（不是我琢磨的启发式）。
+     来源：github.com/sanderland/katrain  `katrain/core/game.py`
+       第 156 行：  ko_or_snapback = len(self.last_capture) == 1 and self.last_capture[0] == move
+       第 187 行：  if ko_or_snapback and len(self.last_capture) == 1 and not ignore_ko:
+                        raise IllegalMoveException("Ko")
 
-  state.moves.push({ x, y, color: state.toMove, captured });
+     翻译成这里的话 —— 状态只有一个：**上一手（对方那一手）提掉了哪一点**。
+       「这一手是不是在上一手单子被提的那一点回提」 AND 「这一手也只提 1 子」 → 判劫
+     就这两条，没有别的条件、也不需要预判未来。
+
+     为什么这两条就够了（KaTrain 的设计，我之前绕了四版才看明白）：
+       · 真劫：对方提走我一子 → 我在那一点回提、只提 1 子 → 判劫 ✓
+       · 倒扑：我回提会一口气提走 ≥2 子 → 第二条不成立 → 放行 ✓
+       · "提掉一个本来就只剩 1 气的子"：上一手提的**不是**我要下的这一点
+         → 第一条不成立 → 放行 ✓
+     我前面四版分别用「提1子+孤子+只剩1气」「把被提子放回去再比」
+     「比 boardAt(n)/boardAt(n-1)」「模拟对方回提再比快照」——全都是在**预判未来**，
+     而预判要处理提子、要吃透 boardAt 的索引语义，我就栽在那些细节上。
+     KaTrain 不预判，只看"上一手干了什么"，所以它不会错。 */
+  const prev = state.moves[state.moves.length - 1];        // 上一手（对方那一手）
+  const 回提上一手被提的那一点 = !!(prev && !prev.pass && prev.captured === 1
+    && prev.capAt && prev.capAt.x === x && prev.capAt.y === y);
+  if (回提上一手被提的那一点 && captured === 1) {
+    flash('打劫：不能立刻提回，得先在他处走一手');
+    return false;
+  }
+  /* 禁着点（给界面画"此处暂时不能下"）：我这一手提了 1 子 → 那一点就是禁着点。
+     （对方在那儿回提会还原局面。他若在那儿下别的、或提多子，规则自然放行。） */
+  state.koPoint = (captured === 1 && capAt) ? { x: capAt.x, y: capAt.y } : null;
+
+  state.moves.push({ x, y, color: state.toMove, captured, capAt: capAt || undefined });
   clearCoachAt(state.moves.length);      // 这个手号上的旧讲解作废（悔棋换了别的棋，见函数注释）
   clockSwitch();                         // 结算本手用时，换对方
   state.toMove = state.toMove === 'b' ? 'w' : 'b';
@@ -598,34 +617,53 @@ function tryPlay(x, y, byAI) {
   return true;
 }
 
-/* ---------- 从「当前局面」反推禁着点（2026-10-07 新增） ----------
-   为什么需要它：简单劫的禁着点是**由上一手决定的**，而悔棋会换掉上一手 ——
+/* ---------- 从手顺反推禁着点（悔棋 / 打开棋谱之后要重算） ----------
+   为什么需要它：打劫的禁着点是**由上一手决定的**，而悔棋会换掉上一手 ——
    所以悔棋之后必须重算，不能清成 null（清了就等于放行，用户 2026-10-07 报过）。
    反过来，悔棋**退掉一个"在别处走"的手**之后，劫其实又成立了，禁着点该回来。
 
-   判据与 tryPlay 里那段**完全一致**（单一来源，避免两处规则跑偏）：
-     上一手提了恰好 1 子、且落下的那颗子是**孤子**、且它只剩一口气
-     → 被提的那一点就是禁着点。
-   （为什么必须有「孤子」那条：倒扑时落子连着自己人，对方回提会一口气提走 ≥2 子、
-     局面并不重复，那是合法的好手 —— 原来漏了这条，把倒扑误判成劫，见 2026-10-06 的记录。）
-
-   实现：不打分叉记录，直接从棋盘现状算 —— 「上一手提的那颗子」在棋盘上的那一格
-   就是劫点，而它现在的气数正好反映了「刚落完 / 已被补劫」两种情形。 */
+   ★★ 判据与 tryPlay **完全一致**（KaTrain 那两条）：
+        上一手（对方那一手）只提了 1 子 → 它提的那一点就是禁着点。
+      不预判未来、不模拟、不比盘面 —— 只看"上一手干了什么"。 */
 function koFromBoard(b, moves) {
   const last = moves[moves.length - 1];
-  if (!last || last.pass || last.captured !== 1) return null;
-  const kx = last.x, ky = last.y;
-  const ki = idx(kx, ky);
-  if (b[ki] === 0) return null;                 // 落子已被提掉（不可能，防御性）
-  /* 判据①：落下的这颗是**孤子**（四邻没有同色子） */
-  for (const [nx, ny] of neighbors(kx, ky)) {
-    if (b[idx(nx, ny)] === b[ki]) return null;
+  if (!last || last.pass || last.captured !== 1 || !last.capAt) return null;
+  return { x: last.capAt.x, y: last.capAt.y };
+}
+
+/* ★ 悔棋之后补上每手的 `capAt`（"这一手提掉了哪一点"）—— 打劫判据要用它。
+   为什么需要补：`capAt` 是落子时算出来的，而 `boardAt()` 重放出来的旧棋谱
+   （以及悔棋前存下来的手顺）里没有这个字段。没有它，`tryPlay` 里
+   "是不是在上一手被提点回提"就永远为假 → 打劫形同失效
+   （实测踩到：悔棋后能无视禁着点直接提劫，用户 2026-10-07 报过）。
+
+   算法（最直白，不做任何推理）：
+     对每一手，比"这一手走之前"和"走之后"的盘面 —— 在它**四邻**里，
+     **之前是敌子、之后变空**的那一格，就是它提掉的那一点。
+   ⚠️ 只在需要时调（悔棋后 / 打开棋谱后）。 */
+function rebuildCapAt() {
+  /* ※ 索引语义要记牢：`boardAt(n)` = **走完第 n 手之后**的盘面
+     （`boardAt(0)` = 开局、还没走；`boardAt(1)` = 第 1 手走完）。
+     所以对第 i 手（0-based 下标）：走之前 = `boardAt(i)`、走之后 = `boardAt(i + 1)`。
+     ⚠️ 我第一版写成了 `boardAt(i)` / `boardAt(i-1)`，整个错开一手 ——
+        于是 `capAt` 一个个都算不出来（实测：悔棋后打劫判据形同失效）。 */
+  const before0 = () => {                      // 第 0 手"走之前"= setup 的盘面（等价 boardAt(0)）
+    const b = new Int8Array(N * N);
+    for (const s of state.setup) b[idx(s.x, s.y)] = s.color === 'b' ? 1 : 2;
+    return b;
+  };
+  for (let i = 0; i < state.moves.length; i++) {
+    const m = state.moves[i];
+    m.capAt = undefined;
+    if (m.pass || !m.captured) continue;       // 没提子 → 不可能是劫的那一手
+    const prevBoard = (i === 0) ? before0() : boardAt(i);        // 这一手之前
+    const after = boardAt(i + 1);                               // 这一手之后
+    const me = m.color === 'b' ? 1 : 2;
+    for (const [nx, ny] of neighbors(m.x, m.y)) {
+      const k = idx(nx, ny);
+      if (prevBoard[k] === 3 - me && after[k] === 0) { m.capAt = { x: nx, y: ny }; break; }
+    }
   }
-  /* 判据②：这颗孤子只剩**一口气** —— 那口气就是被提子原来的位置 = 劫点 */
-  const g = group(b, kx, ky);
-  if (g.libs.size !== 1) return null;
-  const lib = g.libs.values().next().value;
-  return { x: lib % N, y: (lib / N) | 0 };
 }
 
 canvas.addEventListener('click', e => {
@@ -1135,6 +1173,10 @@ $('btn-undo').onclick = () => {
      ★ 同一处还有个反向错：悔棋**退掉一个"在别处走"的手**之后，劫其实又成立了
        （禁着点该回来），而原来是一律清 null —— 两个方向都错。 */
   state.koPoint = koFromBoard(boardAt(state.moves.length), state.moves);
+  /* ★ 顺手补上每手的 `capAt`（"这一手提掉了哪一点"）——
+     打劫判据要靠它判断"这一手是不是在上一手被提的那点回提"。
+     悔棋之后手顺被截断，重算一遍最省心（只在悔棋时做，开销可忽略）。 */
+  rebuildCapAt();
   state.pv = null;               // 变化图基于当前候选点，局面变了就失效
   state.viewAt = state.moves.length;
   /* ★ 局面变短了 → 必须截断分析队列与走势数据（truncateAnalysisTo 的注释里有实测数据）。
@@ -1630,7 +1672,13 @@ function applyRecord(rec, srcName) {
   const cleanName = v => String(v || '').replace(/[\[\]\\]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 24);
   state.names = { b: cleanName(rec.pb), w: cleanName(rec.pw) };
   state.toMove = sideToMove(state.moves.length);
+  /* ★ 打开棋谱时**不拦打劫**（KaTrain 第 135 行同理：重放棋谱用 `ignore_ko=True`，
+     因为那些手的合法性无法追溯、而且往往本来就是"打完劫之后"的局面）。
+     但**禁着点要算出来** —— 用户接着往下摆时得受劫规则约束。
+     先补 `capAt`（棋谱手顺里没有这个字段），再反推禁着点。 */
   state.koPoint = null;
+  rebuildCapAt();
+  state.koPoint = koFromBoard(boardAt(state.moves.length), state.moves);
   state.viewAt = state.moves.length;
   state.candidates = []; state.candAt = -1;
   state.ownership = null; state.ownAt = -1;
