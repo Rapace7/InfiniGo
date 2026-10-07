@@ -813,6 +813,9 @@ main { flex: 1; display: flex; min-height: 0; }
 .qh:hover::after { opacity: 1; visibility: visible; }
 
 .set-modal { width: 640px; }
+.set-startup { display: flex; flex-wrap: wrap; gap: 12px 24px; margin-bottom: 8px; }
+.set-startup label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.set-startup input { accent-color: var(--accent); }
 .set-sub { font-size: 12px; font-weight: 400; color: var(--text-dim); margin-left: 8px; }
 .set-lead { font-size: 12px; color: var(--text-dim); line-height: 1.7; margin: -6px 0 14px; }
 .setrow { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }

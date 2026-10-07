@@ -410,7 +410,7 @@
 <div class="modal-mask" id="settings">
   <div class="modal set-modal">
     <h2>设置 <span class="set-sub">引擎与权重</span></h2>
-    <p class="set-lead">改完点「保存」就生效，不用重开软件。（引擎现在默认不加载，改路径不会自动拉起它们）</p>
+    <p class="set-lead">保存路径后，已加载的引擎会重启；未加载的仍保持关闭。自动加载选项在下次打开软件时生效。</p>
 
     <!-- ★ 2026-10-05 起分成两组（用户要求）：KataGo 管下棋/分析，LoGos 管讲解。
          每组标题旁的「?」**鼠标悬停**就显示这组怎么配 —— 用纯 CSS 的 ::after 显示，
@@ -460,6 +460,15 @@
         <button id="pick-coachWeight">选择…</button>
         <span class="setmark" id="mark-coachWeight">—</span>
       </div>
+    </div>
+
+    <div class="setgroup">
+      <h3>启动时自动加载</h3>
+      <div class="set-startup">
+        <label><input type="checkbox" id="set-autoLoadKatago"> KataGo（下棋与分析）</label>
+        <label><input type="checkbox" id="set-autoLoadCoach"> LoGos（中文讲解）</label>
+      </div>
+      <p class="set-lead">勾选后每次打开软件会自动加载，状态灯变绿即可使用。默认关闭；加载后会占用显存，仍可从顶栏卸载。</p>
     </div>
 
     <!-- 数据（2026-10-05 用户要求：棋谱库位置可改，但默认仍在程序目录里） -->

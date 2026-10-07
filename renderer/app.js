@@ -4893,6 +4893,9 @@ if (btnEngCheck) {
 
 function fillSettingsInputs() {
   for (const k of SET_KEYS) $('set-' + k).value = (setCfg && setCfg[k]) || '';
+  for (const k of ['autoLoadKatago', 'autoLoadCoach']) {
+    $('set-' + k).checked = !!(setCfg && setCfg[k]);
+  }
 }
 
 /* 把「最近用过的权重」灌进输入框的 datalist（2026-10-04 用户要求：权重多套并存、
@@ -4987,6 +4990,9 @@ $('set-shortcut').onclick = async () => {
 
 $('set-save').onclick = async () => {
   for (const k of SET_KEYS) setCfg[k] = $('set-' + k).value.trim();
+  for (const k of ['autoLoadKatago', 'autoLoadCoach']) {
+    setCfg[k] = $('set-' + k).checked;
+  }
   const btn = $('set-save');
   const old = btn.textContent;
   btn.disabled = true;

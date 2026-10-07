@@ -85,6 +85,8 @@ function defaultPaths() {
     playWeight:    path.join(root, 'weights', 'b18c384nbt-humanv0.bin.gz'),
     coachServer:   path.join(logos, 'llama-server.exe'),
     coachWeight:   path.join(logos, 'LoGos-7B-Q4_K_M.gguf'),
+    autoLoadKatago: false,
+    autoLoadCoach:  false,
   };
 }
 
@@ -160,6 +162,8 @@ function readConfig() {
       coachWeight:   usable(raw.coachWeight,   d.coachWeight,   true),
       recordsDir:    typeof raw.recordsDir === 'string' ? raw.recordsDir.trim() : '',
       recent:        normRecent(raw.recent),
+      autoLoadKatago: raw.autoLoadKatago === true,
+      autoLoadCoach:  raw.autoLoadCoach === true,
       /* ★ fellBack 目前**没有界面消费**（留着当预留字段）——
          原本想"回退时给用户提个醒"，但实测那个场景（拷来的整包、挪过位置）
          用户本来就知道自己干了什么，多一句提示反而吵。
@@ -1375,6 +1379,8 @@ function normalizeConfig(c) {
     /* 棋谱库位置（2026-10-05 用户要求可改）。★ 允许为空串 ——
        空 = 用默认（程序目录下的 records\），这也是出厂行为。 */
     recordsDir:    (c && typeof c.recordsDir === 'string') ? c.recordsDir.trim() : '',
+    autoLoadKatago: !!c && c.autoLoadKatago === true,
+    autoLoadCoach:  !!c && c.autoLoadCoach === true,
   };
 }
 
@@ -1679,10 +1685,14 @@ app.whenReady().then(() => {
     return;
   }
   createWindow();
-  /* ★ 2026-10-05 用户要求：**开机不加载任何引擎**。
-     打开软件常常只是想摆棋 / 打谱，用不上 KataGo 和 LoGos ——
-     一开就吃掉几 GB 显存没道理。改成用户手动点「加载」（顶栏的引擎状态灯那里）。
-     界面靠 engine:status 事件得知三个引擎都处于「未加载」。 */
+  /* 默认仍不加载；只有用户在设置中勾选后才在启动时加载对应组。
+     沿用手动加载的 launch，就绪、失败与卸载仍走原来的状态流程。
+     放在快捷方式工具的 return 之后，创建快捷方式不会启动模型。 */
+  if (PATHS.autoLoadKatago) {
+    launch(ENGINES.analyze);
+    launch(ENGINES.play);
+  }
+  if (PATHS.autoLoadCoach) launch(ENGINES.coach);
   setStatus();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
