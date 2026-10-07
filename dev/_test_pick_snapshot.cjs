@@ -1,0 +1,14 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const source=fs.readFileSync(__dirname+'/../renderer/app.js','utf8');
+const fn=source.match(/function pickPositionKey\(at\) \{[\s\S]*?\n\}/);
+assert.ok(fn,'Snapshot must identify the actual position');
+const c={N:19,settings:{rules:'chinese',komi:7.5},state:{setup:[],moves:[{x:3,y:3,color:'b'},{x:15,y:15,color:'w'}]}};
+vm.createContext(c);vm.runInContext(fn[0],c);
+const key=c.pickPositionKey(2);
+c.state.moves[1]={x:16,y:15,color:'w'};
+assert.notEqual(c.pickPositionKey(2),key,'Same move number with a different move is stale');
+c.state.moves[1]={x:15,y:15,color:'w'};
+c.state.moves.push({x:4,y:4,color:'b'});
+assert.equal(c.pickPositionKey(2),key,'Returning to original position still matches');
+c.settings.komi=6.5;assert.notEqual(c.pickPositionKey(2),key,'Rules context belongs to snapshot');
+console.log('Snapshot identity: changed move, return to original, rules context passed');
