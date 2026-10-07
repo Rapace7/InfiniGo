@@ -218,17 +218,14 @@ main { flex: 1; display: flex; min-height: 0; }
 .left {
   width: 284px;
   flex: none;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(0, 3fr) minmax(0, 3fr) minmax(0, 4fr);
   gap: 8px;
   padding: 12px 0 12px 14px;
   min-height: 0;
 }
-/* 三张卡的高度分配：手数列表是高频操作（点着手数看讲解），给多一点；
-   选点讲解的内容最长（几个推荐点各一段），也给多一点；分析讲解居中。 */
-.left > .card:nth-child(1) { flex: 1.2; }
-.left > .card:nth-child(2) { flex: 1; }
-.left > .card:nth-child(3) { flex: 1.3; }
+/* 手数、分析讲解、推荐落点讲解按实际卡片高度分配 3:3:4。 */
+.left > .card { min-height: 0; }
 
 /* 讲解卡的头：标题（占满剩余宽度）+ 右侧按钮 */
 .coach-head {
@@ -237,6 +234,11 @@ main { flex: 1; display: flex; min-height: 0; }
 }
 .coach-head .card-title { margin-bottom: 0; flex: 1; min-width: 0; }
 .coach-head button { height: 24px; padding: 0 9px; font-size: 11.5px; flex: none; }
+.pick-display-toggle { display: flex; align-items: center; gap: 5px; flex: none; width: 100%; margin-bottom: 6px; font-size: 12px; font-weight: 400; color: #787874; cursor: pointer; }
+.pick-display-toggle input { width: 13px; height: 13px; margin: 0; accent-color: #858b84; }
+.pick-display-toggle small { margin-left: auto; font-size: 10.5px; color: var(--text-dim); }
+.pick-context { flex: none; font-size: 10.5px; line-height: 1.5; color: #787874; margin-bottom: 6px; }
+.pick-context.is-stale { color: #96704a; }
 /* ---------- 全盘讲解的进度条（2026-10-05）----------
    只在跑的时候露出来。★ 必须显式写 [hidden] 覆盖 ——
    .batch-bar 自己是 flex，浏览器默认的 [hidden]{display:none} 压不过类选择器

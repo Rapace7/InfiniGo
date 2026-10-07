@@ -132,7 +132,7 @@ const state = {
      退出这个状态的只有两条路：点「新对局 → 开始」（applyNewGame），
      或打开一份棋谱（applyRecord，它会切摆棋模式）。 */
   noGame: true,
-  showHints: false,  // 推荐点（默认关 —— 2026-10-04 用户定的启动默认）
+  showHints: (() => { try { return localStorage.getItem('rapacego.showHints') === 'true'; } catch { return false; } })(), // 首次默认关，之后沿用用户选择
   showCoords: false, // 棋盘边缘显示 A–T / 1–19（默认关）
   soundOn: true,     // 落子音效（默认开）
   clock: { on: false },   // 对局计时（applyNewGame 里按 settings.clock 填充）
@@ -831,6 +831,7 @@ function syncUI() {
      那样一旦 HTML 和 state 初值不一致，就会出现「开关显示是开的、其实没生效」
      （2026-10-04 改启动默认值时差点踩到）。 */
   $('chk-show').checked = state.showHints;
+  $('pick-show-hints').checked = state.showHints;
   $('chk-coords').checked = state.showCoords;
   $('chk-nums').checked = state.showNums;
   $('chk-pv').checked = state.showPV;
@@ -1218,10 +1219,15 @@ $('btn-pass').onclick = () => {
 };
 
 /* 这个开关只管「棋盘上画不画推荐点」——右侧胜率是客观数据，始终显示 */
-$('chk-show').onchange = e => {
-  state.showHints = e.target.checked;
+function setHintsVisible(visible) {
+  state.showHints = !!visible;
+  $('chk-show').checked = state.showHints;
+  $('pick-show-hints').checked = state.showHints;
+  try { localStorage.setItem('rapacego.showHints', String(state.showHints)); } catch { /* 显示仍可使用 */ }
   draw();
-};
+}
+$('chk-show').onchange = e => setHintsVisible(e.target.checked);
+$('pick-show-hints').onchange = e => setHintsVisible(e.target.checked);
 
 $('chk-coords').onchange = e => {
   state.showCoords = e.target.checked;
@@ -5310,13 +5316,12 @@ const COACH_PH_EXPLAIN = [
 ].join('\n');
 
 const COACH_PH_PICK = [
-  '讲这一手该走哪、为什么。',
+  '点击「生成讲解」，解释当时的推荐落点。',
   '',
-  '★ 和棋盘上那几个虚线圆圈是同一批点：',
-  '   棋盘上 —— KataGo 算的，一眼看「哪、多好」',
-  '   这里 —— 同一批点，每个再补一句「为什么这么下」',
+  '棋盘：KataGo 的实时推荐，随分析更新。',
+  '这里：点击时的推荐落点快照，由 LoGos 解释。',
   '',
-  '点由 KataGo 定（它算得准），LoGos 只负责讲道理。',
+  '讲解会保留；局面变化后请重新生成。',
   '',
   '打谱时用不了 —— 那是别人的棋，不替人支招。',
 ].join('\n');
@@ -5579,7 +5584,7 @@ function resetCoachBtn(which) {
   const b = $(which === 'explain' ? 'btn-explain' : 'btn-pick');
   if (!b) return;
   b.disabled = false;
-  b.textContent = which === 'explain' ? '讲解这手' : '给推荐点';
+  b.textContent = which === 'explain' ? '讲解这手' : '生成讲解';
 }
 
 /* ---------- 按**当前手数**刷新两个框 ----------
@@ -5589,7 +5594,23 @@ function resetCoachBtn(which) {
      ② 讲完第 6 手再点回第 2 手，第 2 手的讲解直接没了。
      现在每手各存一份，切到哪手显示哪份，没有就写「这一手还没有讲解」。 */
 let coachRenderedAt = -999;
+function pickPositionKey(at) {
+  return JSON.stringify([N, settings.rules, settings.komi, state.setup, state.moves.slice(0, at)]);
+}
+function renderPickContext() {
+  const rec = state.coach.pickPending || state.coach.pick;
+  const el = $('pick-context');
+  const stale = !!rec && rec.positionKey !== pickPositionKey(state.viewAt);
+  el.hidden = !rec;
+  el.classList.toggle('is-stale', stale);
+  el.textContent = rec
+    ? '第 ' + rec.at + ' 手后 · ' + (rec.side === 'b' ? '黑方' : '白方') + ' · '
+      + (state.coach.pickPending ? '正在生成讲解快照' : '讲解快照')
+      + (stale ? ' · 当前局面已变化' : '')
+    : '';
+}
 function renderCoachPanels(force) {
+  renderPickContext(); // 生成期间也更新上下文，不重绘打字机正文
   const at = state.viewAt;
   if (!force && at === coachRenderedAt
       && state.coach.busy.explain !== at && state.coach.busy.pick !== at) return;
@@ -5630,10 +5651,8 @@ function renderCoachPanels(force) {
     if (box) {
       const rec = state.coach.pick;
       box.textContent = '';
+      box.appendChild(mkEl('div', 'src', '讲解基于点击时的 KataGo 推荐落点。'));
       if (rec && rec.pts && rec.pts.length) {
-        if (rec.at !== at) {
-          box.appendChild(mkEl('div', 'ph', '（这是第 ' + rec.at + ' 手之后那个局面的讲解）'));
-        }
         rec.pts.forEach(p => {
           box.appendChild(mkEl('div', 'pnt', p.title));
           box.appendChild(mkEl('div', '', p.body));
@@ -5641,7 +5660,7 @@ function renderCoachPanels(force) {
       } else if (state.fromRecord || !state.moves.length) {
         box.appendChild(mkEl('div', 'ph', COACH_PH_PICK));
       } else {
-        box.appendChild(mkEl('div', 'ph', '还没做过选点讲解 —— 点上面「给推荐点」。'));
+        box.appendChild(mkEl('div', 'ph', '还没生成讲解 —— 点上面「生成讲解」。'));
       }
     }
   }
@@ -5654,6 +5673,7 @@ function clearCoachPanels() {
   state.coach.busy = { explain: -1, pick: -1 };
   state.coach.explain = {};
   state.coach.pick = null;
+  state.coach.pickPending = null;
   resetCoachBtn('explain');
   resetCoachBtn('pick');
   /* 「全盘讲解」只在**打开棋谱**时出现（用户要求） */
@@ -5664,7 +5684,7 @@ function clearCoachPanels() {
 
 /* ---------- 选点讲解 ----------
    点位和胜率**全部取自 KataGo 的候选点**（state.candidates，就是棋盘上画的那几个）
-   —— 所以框里的点和棋盘上的圆圈永远是同一批，不会打架。
+   —— 点击时同源；之后棋盘继续实时更新，文字保留点击时的快照。
    LoGos 只负责给每个点补一句「为什么这么下」。 */
 async function runPickExplain() {
   if (state.coach.busy.pick >= 0) { flash('正在讲，稍微等一下…'); return; }
@@ -5683,6 +5703,7 @@ async function runPickExplain() {
 
   const at = state.viewAt;                           // ★ 讲的是哪个局面（存下来时要标出来）
   const pts = state.candidates.slice(0, 4);          // 用户要求：不能只给一个
+  setHintsVisible(true);                            // 看推荐讲解时同步显示盘上的点
   const board = boardAt(at);
   const moves = state.moves.slice(0, at);
   const side = sideToMove(at);
@@ -5690,8 +5711,12 @@ async function runPickExplain() {
 
   const body = $('pick-body');
   body.textContent = '';
+  body.appendChild(mkEl('div', 'src', '讲解基于点击时的 KataGo 推荐落点。'));
   const btn = $('btn-pick');
   state.coach.busy.pick = at;
+  const snapshot = { at, side, positionKey: pickPositionKey(at), gen: gameGen };
+  state.coach.pickPending = snapshot;
+  renderPickContext();
   btn.disabled = true;
   btn.textContent = '讲解中…';
   const collected = [];                              // 讲完的点（存起来，切手数也还在）
@@ -5741,11 +5766,12 @@ async function runPickExplain() {
     /* ★ 只清「自己那一手」的标记：可能用户已经切到别的手、并在那里起了新的一段，
        无条件清会把新那段的标记抹掉（审查发现）。 */
     if (state.coach.busy.pick === at) state.coach.busy.pick = -1;
+    if (state.coach.pickPending === snapshot) state.coach.pickPending = null;
     resetCoachBtn('pick');
   }
   /* 几个点都讲完了才存（中途被切走/掐断就不存，免得留下半份）。
      ★ 存成**一份快照**、不按手数存 —— 用户要求：切手数时「显示刚才讲解的就行」。 */
-  if (collected.length === pts.length) state.coach.pick = { at: at, pts: collected };
+  if (snapshot.gen === gameGen && collected.length === pts.length) state.coach.pick = { ...snapshot, pts: collected };
   renderCoachPanels(true);
 }
 
