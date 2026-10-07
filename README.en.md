@@ -6,6 +6,11 @@
 
 [简体中文](README.md) · English
 
+> ## 📥 [Download · installation steps (about 5 minutes)](README.en.md#option-1-download-the-ready-to-run-build-recommended)
+>
+> Windows 10 / 11 only. **If you don't want to read the whole thing, just click that link** —
+> it starts at the download step and walks you through to a running app.
+
 ![Main window](docs/screenshots/main-with-coach.png)
 
 ---
@@ -227,10 +232,16 @@ via the `RAPACEGO_KATAGO` / `RAPACEGO_LOGOS` environment variables.
 
 ### Option 1: download the ready-to-run build (recommended)
 
-Grab it from the **[Releases page](https://github.com/Rapace7/RapaceGo/releases)** —
-take the **topmost entry** (its title carries the version number, e.g. `v0.1.10`).
-Do **not** look for a fixed version like `v0.1.0`: that is the *oldest* release, at the
-bottom of the list.
+> ## ⬇️ [Go straight to the newest download list (Assets)](https://github.com/Rapace7/RapaceGo/releases/latest#assets)
+>
+> That link **always lands on the newest release** (no version number to remember), and drops
+> you right at the file list. `RapaceGo.zip` in there is the one you want.
+
+Grab it from the **[download list](https://github.com/Rapace7/RapaceGo/releases/latest#assets)** —
+the link above always points at the newest release, so you never have to look up a version
+number. (For the full history and changelogs, the
+**[Releases page](https://github.com/Rapace7/RapaceGo/releases)** lists every version, newest
+at the top.)
 
 | File | Size | Notes |
 |---|---|---|
