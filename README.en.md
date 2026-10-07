@@ -37,6 +37,13 @@ scratch-play ("what if") board; 9/13/19 lines; Chinese / Japanese / Korean / Min
 **Numbers** — winrate bar & score, recommended moves, move previews, ownership map
 (fog or blocks), winrate/score graph, per-move loss list, and a **review report**
 (black/white split: average loss, blunder counts, agreement with AI's top choice).
+Per-move numbers appear **only once the search has settled** (a "…" placeholder shows
+while it is still computing), so a number never changes after you have seen it.
+
+**Recovery** — a **Refresh** button next to the engine lamps in the top bar. If the
+recommended moves stop appearing, or the "computing… N" line above the board freezes,
+press it: it releases the stuck analysis, re-queues it, re-checks the engine, and
+restarts the engine if it is actually dead.
 
 **Explanation** — three panels, all powered by the local LoGos model:
 - **Explain this move** — verdict from KataGo, reasoning from LoGos. Stored per move.

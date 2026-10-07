@@ -81,6 +81,21 @@ body {
 .engines .eng[data-state="error"]  .dot { background: #c0392b; }
 @keyframes engPulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
 
+/* ★「刷新」按钮（2026-10-06 晚）：紧挨状态灯的急救键。
+   视觉上要**明显是另一个东西**（它不是引擎灯，没有状态点），但也不能太抢眼 ——
+   所以：虚线边（暗示「动作」而不是「状态」）、比状态灯略小一号。
+   ⚠️ 它是 .eng-refresh，**不在 .engines 里面** —— 那里面的按钮会被状态灯逻辑接管。 */
+.eng-refresh {
+  height: 24px; padding: 0 9px; margin-left: 6px;
+  font: inherit; font-size: 11.5px;
+  border: 1px dashed var(--line); border-radius: 999px;
+  background: var(--panel); color: var(--text-dim);
+  cursor: pointer; white-space: nowrap; flex: none;
+}
+.eng-refresh:hover { border-style: solid; border-color: var(--accent); color: var(--accent); }
+/* 正在刷新时给个反馈（刷新很快，不给反馈会以为没点着） */
+.eng-refresh[data-busy="1"] { border-style: solid; border-color: var(--accent); color: var(--accent); opacity: .75; }
+
 /* 状态灯点开的小菜单：**向下弹**（它在顶栏，下面空间多）
    ★ z-index 要**低于**弹窗遮罩（.modal-mask 是 50）——
      原来写 60，状态灯的小菜单会浮在弹窗上面（审查发现）。
@@ -337,6 +352,9 @@ main { flex: 1; display: flex; min-height: 0; }
 .movelist .pt { color: var(--text-dim); flex: none; }
 .movelist .dl { margin-left: auto; font-size: 11px; flex: none; }
 .movelist .dl.bad { color: #c0392b; }
+/* 还在算的那一手：占位「…」压淡 —— 让用户知道这里会有数字，不是坏了。
+   （2026-10-06 晚新增：数字必须等算准了才显示，见 app.js 的 evalSettled） */
+.movelist .dl.calc { color: var(--text-dim); opacity: .45; }
 /* 试下（草稿）里下的手：整体压淡 + 标个「草」，免得回头忘了自己在草稿里 */
 .movelist li.draft .no, .movelist li.draft .st, .movelist li.draft .pt { opacity: .5; }
 .movelist .dft {

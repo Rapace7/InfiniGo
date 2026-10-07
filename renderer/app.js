@@ -133,6 +133,15 @@ const state = {
   terrStyle: 'fog',      // 形势画法：'fog' 雾（+死子变淡） / 'blocks' 方块
   showNums: false,       // 盘上显示手数（底栏「手数」，快捷键 M）
   rootVisits: 0,         // 最近一次分析的搜索量（「计算中… 320」那个数字）
+  /* ★ 每一手那个胜率是「用多少搜索量算出来的」（history 的伴随数组，索引对齐）。
+     2026-10-06 晚新增，为了治「手数后面的涨跌数字会自己跳」。
+     来龙去脉：引擎每 0.25 秒推一次**中间报告**，每份报告都会写一次 history ——
+     于是同一手会被写十几遍，而列表读的是**最后一次**的值（= 搜索量最大的那次）。
+     实测（_cdp_jump.mjs，连落 6 手）：同一手被写 4~14 次，首次写入只有 150 访问量、
+     末次 515；胜率极差最大到 **8.06%**（27.7% → 19.7% → 32.9%）。
+     用户看到的正是「下完显示亏，过会儿点回去看又不亏了」。
+     有了它就能判断「新结果是不是比已有的更可信」，见 rememberEval。 */
+  histVisits: [],
   showPV: false,         // 变化图：鼠标停在推荐点上满 1 秒 → 显示后续变化（底栏「变化图」，快捷键 B）
   pv: null,              // 当前正在显示的变化：{ x, y, list: ['Q16','D4',...] }；null = 不显示
   setup: [],         // 让子 / 座子
@@ -150,6 +159,7 @@ const state = {
        照那个画每落一手曲线就要翻一次，没法看；统一成黑方才能连成一条线。 */
   history: [],
   leads: [],
+  histVisits: [],        // 每一手胜率的「精度」伴随数组（见 state.histVisits 的注释）
   curveMode: 'win',  // 走势图纵轴：'win' 黑方胜率 / 'lead' 黑方领先目数
   draft: null,       // 试下（打草稿）：null = 不在试下；否则见 enterDraft()
   result: null,      // 终局结果 { winner, lead, unit, resign, by, terminal }；null = 尚未结束
@@ -833,6 +843,7 @@ function enterDraft() {
       candidates: state.candidates.slice(),
       candAt: state.candAt,
       history: state.history.slice(),
+      histVisits: state.histVisits.slice(),
       result: state.result,
       lastEval: state.lastEval,
       clock: JSON.parse(JSON.stringify(state.clock)),   // 全是数字/布尔，可深拷贝
@@ -853,6 +864,7 @@ function exitDraft() {
   state.candidates = s.candidates;
   state.candAt = s.candAt;
   state.history = s.history;
+  state.histVisits = s.histVisits || [];
   resetAnalysisState();                  // history 被整体换回来了 → 欠账与上屏标记一起作废重来
   Object.assign(state.clock, s.clock);   // 保持同一个 clock 对象（renderClocks 一直指着它）
   state.result = s.result;
@@ -1580,6 +1592,7 @@ function applyRecord(rec, srcName) {
   state.ownership = null; state.ownAt = -1;
   state.history = [];
   state.leads = [];
+  state.histVisits = [];
   resetAnalysisState();         // 换了棋谱：旧的分析欠账 / 「已上屏」标记全部作废
   state.result = null;
   state.draft = null;
@@ -2246,6 +2259,9 @@ async function openSavedReview(name, note) {
   state.review.file = name;
   if (Array.isArray(rv.history)) state.history = rv.history;
   if (Array.isArray(rv.leads)) state.leads = rv.leads;      // 旧报告没有这一项 → 目差模式会提示重算
+  /* ★ 复盘的每一手都是同一档搜索量一起算的 → 精度标记统一按报告里记的那一档填。
+     旧报告没记这一项的话退回「已够准」，免得它被随手一次粗算改写掉。 */
+  if (Array.isArray(rv.history)) state.histVisits = rv.history.map(() => rv.visits || reviewVisits());
   renderMoveList();
   renderCurve();
   showReviewReport();
@@ -2319,6 +2335,10 @@ async function runReview(name) {
     if (typeof sl !== 'number') return undefined;
     return isWhiteTurn(x) ? -sl : sl;
   });
+  /* ★ 整盘复盘的每一手都是**同一档搜索量**一起算出来的 → 精度标记统一填上。
+     填了它，rememberEval 之后就不会用零散的中间报告去改写这些格
+     （否则复盘完再随手看一下某手，那一手的涨跌就会被一次粗算覆盖掉）。 */
+  state.histVisits = turns.map(() => reviewVisits());
   renderMoveList();      // 手数列表要标目损
   renderCurve();         // 走势图要标失误点
   if (res.incomplete) flash('复盘提前结束（超时），数据可能不全');
@@ -2678,6 +2698,7 @@ function applyNewGame(idle) {
   state.ownAt = -1;
   state.history = [];               // 走势数据随之清空（胜率 + 目差两条）
   state.leads = [];
+  state.histVisits = [];            // ★ 精度标记一起清（它跟 history 是一对，见 state 注释）
   resetAnalysisState();             // 换局：旧的分析欠账 / 「已上屏」标记全部作废
   state.viewAt = 0;
   state.thinking = false;
@@ -2725,6 +2746,23 @@ const ANALYZE_VISITS = 500;
      降到 20 后，落子约 0.1 秒就有第一批点可画，观感变成「实时出现、数字往上走」。
      只保留一个极低门槛，是为了滤掉 visits=0/1 那种纯噪声（点的排序会乱跳）。 */
 const HINT_MIN_VISITS = 20;
+
+/* 渲染端等一次分析请求回来最多等多久（毫秒）——见 runAnalysisOnce 里的 Promise.race。
+   取值理由：
+     · 正常一次分析 0.4~1.5 秒（500 visits，实测中位 472ms）；
+     · 引擎切到一个全新局面重建搜索树最慢约 1~3 秒；
+     · 就算「计算深度」调到最大档（用户能选到的上限）也远在 25 秒内。
+   25 秒是「不可能有这么慢的正常请求」的界线 —— 超过它就不是慢，是那条路断了。
+   ⚠️ 别调太小：调成 5 秒会在深档位下把正常请求误判成超时，反而让分析一直在重排。 */
+const ANALYZE_TIMEOUT_MS = 25000;
+
+/* 连续超时计数（成功一次就归零）。超时后要主动重排一次，但不能无限重排 ——
+   引擎真挂了的时候，无限重排会变成每 25 秒一次的无效空转，日志和界面都在刷。 */
+let anaTimeouts = 0;
+/* 「anaBusy 是什么时候置上的」——给顶栏那个「刷新」按钮判断"是真卡了还是正在算"。
+   置上时间超过 REFRESH_STUCK_MS 就一定不是正常请求（正常一次 0.4~1.5 秒）。 */
+let anaBusySince = 0;
+const REFRESH_STUCK_MS = 12000;
 
 const toGTP = (x, y) => GTP_COLS[x] + (N - y);
 
@@ -2775,6 +2813,16 @@ let shownAt = -1;
 let anaQueue = [];
 let anaForceCur = false;   // 当前局面是否要强制重算（改了计算深度 / 数子之后刷新画面）
 
+/* 补账队列的长度上限（2026-10-06 晚新增）。
+   为什么要限：补账和历史曲线用的是**同一个引擎**（选点优先，见 runAnalysis 的循环顺序），
+   队列无限长的话，用户连点几十手之后引擎会长时间忙于补旧账 ——
+   实测**不会**拖慢选点（选点永远排在前面，且新请求会掐掉正在跑的补账：
+   有欠账时选点延迟中位 377ms，无欠账 470ms，见 _cdp_priority.mjs），
+   但曲线要很久才补齐、而且引擎没有空闲。
+   取 40：正常一局连点几十手也补得完；真到 40 以上说明用户在极快地连点，
+   那种节奏下"最近 40 手的涨跌还准"就够了，更早的等下一次落子慢慢补。 */
+const ANA_QUEUE_MAX = 40;
+
 function scheduleAnalysis(delay, force) {
   /* ★ 未开局：**一次分析都不发**（用户要求「胜率条五五开不动」）。
      这是「不动」的根子 —— 数字由 syncUI 画成中性，而且没有请求来覆盖它。
@@ -2787,6 +2835,9 @@ function scheduleAnalysis(delay, force) {
     && typeof state.history[at] !== 'number'
     && anaQueue.indexOf(at) < 0) {
     anaQueue.push(at);
+    /* ★ 超长就丢掉最旧的那几条（见 ANA_QUEUE_MAX）。丢的是「最久以前那一手」，
+       它多半已经不在用户视线里；当前局面和最近几手永远留着。 */
+    if (anaQueue.length > ANA_QUEUE_MAX) anaQueue.splice(0, anaQueue.length - ANA_QUEUE_MAX);
   }
   clearTimeout(anaTimer);
   /* ★ 这里**不要**加「取消正在跑的分析」。试过（2026-10-04）：
@@ -2830,6 +2881,9 @@ function truncateAnalysisTo(len) {
      所以合法索引是 0..len）。多出来的直接砍掉。 */
   if (state.history.length > len + 1) state.history.length = len + 1;
   if (state.leads.length > len + 1) state.leads.length = len + 1;
+  /* ★ histVisits（每格的精度）必须跟着一起截 —— 它是 history 的伴随数组，
+     错位一格就等于拿别的手的精度去判断这一格要不要改写（2026-10-06 晚新增）。 */
+  if (state.histVisits.length > len + 1) state.histVisits.length = len + 1;
   /* candAt / ownAt 也别指着不存在的局面，否则候选点和形势雾会被当成过期的画淡。 */
   if (state.candAt > len) state.candAt = -1;
   if (state.ownAt > len) { state.ownership = null; state.ownAt = -1; }
@@ -2884,6 +2938,7 @@ async function runAnalysis() {
   if (!engineReady) return;                      // 引擎还没就绪：等 onStatus 触发 syncUI 再来
   if (anaBusy) { anaPoke = true; return; }       // ★ 不并发，只登记「还有活要干」
   anaBusy = true;
+  anaBusySince = Date.now();                     // ★ 给「刷新」按钮判断卡死用
   const gen = gameGen;                            // ★ 这一轮属于哪一代
   try {
     /* 上限只是防止意外死循环（正常一轮只会跑十几次）。 */
@@ -2959,11 +3014,28 @@ async function runAnalysisOnce(at) {
 
   /* 只发一次查询：引擎每 0.25 秒推一次中间报告（onProgress），
      胜率与候选点会随搜索量自然收敛 —— 这才是真正的「先粗后精」，
-     且不会出现两段式那种「先显示一批点、再整批换掉」的闪动。 */
-  const res = await window.api.analyze(Object.assign({
-    maxVisits: settings.visits || ANALYZE_VISITS,   // ★ 每次请求现读 —— 所以改档位是**热切换**
-    includeOwnership: state.showTerritory,   // 形势雾的数据（不增加搜索量）
-  }, req));
+     且不会出现两段式那种「先显示一批点、再整批换掉」的闪动。
+
+     ★★ 渲染端超时兜底（2026-10-06 晚新增）。
+     为什么必须自己再兜一层：主进程那边虽然有 90 秒超时，但**渲染端这一侧
+     同样有"回不来"的路**（IPC 通道异常、页面被挂起、主进程那条 promise 因为
+     任何原因没 settle）。一旦那一次 await 永不返回，`anaBusy` 就永远占着 ——
+     后果不是"这一手没算"，而是**整个分析链路停摆**：
+     选点不再刷新、胜率条冻住、棋盘上方那行「计算中… N」定在一个数字上不动，
+     点悔棋、回看、落子都不管用，只能重启软件。这正是用户报的现象。
+     加这一层之后，最坏情况是「这一手晚 25 秒」，而不是整个软件卡死。 */
+  let res;
+  try {
+    res = await Promise.race([
+      window.api.analyze(Object.assign({
+        maxVisits: settings.visits || ANALYZE_VISITS,   // ★ 每次请求现读 —— 所以改档位是**热切换**
+        includeOwnership: state.showTerritory,   // 形势雾的数据（不增加搜索量）
+      }, req)),
+      new Promise(r => setTimeout(() => r({ error: '分析请求超时（渲染端 25 秒没有响应）' }), ANALYZE_TIMEOUT_MS)),
+    ]);
+  } catch (e) {
+    res = { error: String((e && e.message) || e) };
+  }
 
   /* ★ 这一趟期间**换过局 / 换过棋谱** → 这次结果整体作废（一个字段都不写）。
      放在所有分支之前：连「记 history」都不做，那些手已经不属于现在这盘棋了。 */
@@ -2974,19 +3046,36 @@ async function runAnalysisOnce(at) {
      （用户实测报过这个现象；根因是 runScore 里的 window.api.cancel()）。 */
   if (res && res.cancelled) return false;
   if (!res || res.error) {
+    const timedOut = !!(res && res.error && res.error.indexOf('超时') >= 0);
+    if (timedOut) {
+      /* ★ 超时 = 请求回不来了。**必须主动重排一次**，否则 anaForceCur 会一直挂着、
+         而 anaBusy 已经放开 —— 没人再触发的话分析就永远停在这儿（就是"卡死"）。
+         限流：连续 3 次仍不回来就不再重排，明确报错并让用户看到该怎么办。 */
+      anaTimeouts += 1;
+      if (anaTimeouts <= 3) {
+        console.warn('[分析] 第 ' + anaTimeouts + ' 次请求超时，重排一次');
+        setTimeout(() => scheduleAnalysis(0, true), 200);
+      } else {
+        engineNote = '分析引擎连续无响应 —— 顶栏「KataGo」里卸载后重新加载';
+        console.error('[分析] 连续 ' + anaTimeouts + ' 次超时，停止重排');
+        flash(engineNote);
+      }
+    }
     if (at === state.viewAt) {
-      $('eval-wr').textContent = '分析失败';
+      $('eval-wr').textContent = timedOut ? '分析超时' : '分析失败';
       $('eval-wr-w').textContent = '';
       $('eval-lead').textContent = res && res.error ? res.error : '';
       $('eval-lead-w').textContent = '';
     }
     return false;
   }
+  anaTimeouts = 0;                 // 有结果回来了 → 计数归零
 
   /* 补历史欠账（at ≠ 当前局面）：只记这一手的胜率，画面别动。 */
   if (at !== state.viewAt) {
     if (((res.root && res.root.visits) || 0) >= HINT_MIN_VISITS) {
-      rememberEval(at, blackWinFrom(res, at), blackLeadFrom(res, at));
+      /* ★ 带上这次的搜索量（第四个参数）—— 门槛靠它判断「够不够准」，见 rememberEval */
+      rememberEval(at, blackWinFrom(res, at), blackLeadFrom(res, at), (res.root && res.root.visits) || 0);
     }
     return true;
   }
@@ -3004,8 +3093,32 @@ async function runAnalysisOnce(at) {
 
    ★ 为什么单独抽出来（2026-10-04）：人机对弈时用户落子后立刻轮到 AI，
      那一手**等不到属于自己的分析**（见 syncUI 里的调度 + runAnalysisOnce 的作废分支），
-     所以要能在「结果已作废」的路径上也把这一手的胜率留下来。 */
-function rememberEval(at, blackWin, blackLead) {
+     所以要能在「结果已作废」的路径上也把这一手的胜率留下来。
+
+   ★★ 搜索量门槛（2026-10-06 晚新增，治「数字自己跳」）：
+     这个函数是全盘**唯一**写 history 的地方，而它会被每一次分析结果调用 ——
+     包括引擎每 0.25 秒推一次的**中间报告**（那时搜索量才 150 左右，胜率还没收敛）。
+     原来是无条件覆盖，于是同一手被写十几遍、数字跟着乱跳。
+
+     实测（_cdp_jump.mjs，连落 6 手后逐步回看）：
+       at=1 被写 6 次，访问量 151/298/463/515/515/515，胜率极差 0.62%
+       at=4 被写 4 次，访问量 152/312/471/514，          胜率极差 1.63%
+       at=5 被写 5 次，访问量 168/340/515/515/515，      胜率极差 1.69%
+       at=6 被写 14 次（含悔棋重下），                   胜率极差 **8.06%**
+         → 27.7% → 19.7% → 32.9%，正是用户说的「原本算亏的，再点一次就不亏了」。
+       列表里的涨跌是 (history[i] − history[i−1])×100，所以极差还会被放大。
+
+     现在的规矩（两道，缺一不可）：
+       ① **粗算只许记账、不许覆盖**：搜索量不到目标值（底栏「计算深度」）的 90% 时，
+          只在这一格**本来是空的**时候写进去（先给个暂行值）；已经记过的一律不动。
+       ② **精算才许改写，且不许倒退**：达到 90% 才允许覆盖已有记录，而且不能比已有记录更低。
+
+     ⚠️ 曾经写成「新值是旧值的 1.25 倍就允许覆盖」—— 实测那是**形同虚设**
+        （_cdp_gate.mjs）：中间报告的访问量是 122 → 294 → 489 → 515 逐级涨的，
+        每一级都比上一级高 2.4 倍，于是每一级都通过了 1.25 倍那道门，数字照跳不误。
+        「逐级放宽」对逐级增长的报告序列没有任何拦截力 —— 必须用**目标值的绝对比例**当门槛。
+     ⚠️ 别改成「永不覆盖」：早期算的那几手会永远停在粗算值上，回看也不会变准。 */
+function rememberEval(at, blackWin, blackLead, visits) {
   if (!(at >= 0)) return;
   if (state.draft && at > state.draft.from) return;
   /* ★★ 越界拒收（2026-10-06）。这是 history / leads 的**唯一写入口**，
@@ -3015,10 +3128,31 @@ function rememberEval(at, blackWin, blackLead) {
      走势曲线会画出根本不存在的第 8、9、10 手，手数列表里也有幽灵数据。
      场景：悔棋后队列里残留了已撤销手数的欠账，那次请求回来就写越界了。 */
   if (at > state.moves.length) return;
+
+  const v = (typeof visits === 'number' && visits > 0) ? visits : 0;
+  const target = settings.visits || ANALYZE_VISITS;        // 底栏「计算深度」
+  const SETTLED = target * 0.9;                            // 「够准」的搜索量门槛
+  if (typeof state.history[at] === 'number') {             // 这一格已经有值了
+    const old = state.histVisits[at] || 0;
+    if (v < SETTLED) return;              // ① 粗算不许覆盖
+    if (v < old) return;                  // ② 不许倒退（用更少的搜索量改写）
+  }
   if (typeof blackWin === 'number') state.history[at] = blackWin;
   if (typeof blackLead === 'number') state.leads[at] = blackLead;
+  state.histVisits[at] = v;                                // 记住这一格的「精度」
   renderCurve();
   renderMoveList();          // 列表里的「这一手涨跌」也要跟着刷新
+}
+
+/* 这一手的胜率「算准了没有」——手数列表用它决定显示数字还是「…」。
+   为什么要问这个（2026-10-06 晚）：引擎每 0.25 秒推一次中间报告，刚落子那 0.3 秒
+   只有 130 左右的搜索量，胜率离收敛值差得远（实测同一手 122 → 515 之间差了 3%）。
+   如果这时就把数字摆出来，用户会看到它过一会儿自己变一个值 —— 那正是他报的
+   「下完显示一个数字，过会儿再看又不是这个数」。
+   改成：没算准就显示「…」，算准了才出数字。数字一旦出现就不会再变。 */
+function evalSettled(at) {
+  const target = settings.visits || ANALYZE_VISITS;
+  return (state.histVisits[at] || 0) >= target * 0.9;
 }
 
 /* 引擎给的是「轮到走棋那一方」的胜率 —— 统一换算成黑方视角（at 只用于兜底判断该谁走） */
@@ -3092,8 +3226,9 @@ function applyAnalysis(p, at) {
   if (totalV < HINT_MIN_VISITS) return;        // 极低搜索量（<20）时数据纯噪声，先不更新
 
   /* 记下「第几手时黑方胜率多少」——胜率走势曲线与手数列表都靠它。
-     试下（草稿）里下的手**不记**：那些手等会儿会被整体丢掉，写进曲线就是脏数据。 */
-  rememberEval(at, blackWin, lead);
+     试下（草稿）里下的手**不记**：那些手等会儿会被整体丢掉，写进曲线就是脏数据。
+     ★ 第四个参数 = 这次结果的搜索量（totalV），门槛用它判断「够不够准」。 */
+  rememberEval(at, blackWin, lead, totalV);
 
   /* 候选点的过滤门槛 —— ★ 2026-10-04 实测（_cdp_cand.mjs，连续落 8 手，共 39 次采样）：
      引擎**每次都返回 8 个候选**，但原来那道「按总搜索量 1.5%」的比例门槛，
@@ -3570,6 +3705,79 @@ if (window.api) {
   window.addEventListener('keydown', e => { if (e.key === 'Escape') closeEngineMenu(); });
 
   window.api.engineStatus().then(applyEngineStatus);
+
+  /* ---------- 顶栏「刷新」按钮（2026-10-06 晚新增，用户要求） ----------
+     用途：出现「推荐点不显示 / 棋盘上方『计算中… N』定住不动」时的**急救键**。
+     为什么必须有它（而不是只靠自动恢复）：分析链路上有两条"等引擎回话"的路
+     （主进程 90 秒、渲染端 25 秒），但都可能因为别的原因没兜住；
+     一旦那一次 await 永不返回，`anaBusy` 就永远占着 → 整个分析链路停摆，
+     用户能做的只有重启软件。有了它，用户自己点一下就放开、重排、并顺手救引擎。
+
+     三步，顺序不能反：
+       ① **放开前端卡住的闸门**（anaBusy / anaPoke / 超时计数），并把「待重算」意图留着；
+       ② **问一遍引擎真实状态**；灯是 error / 显示就绪但引擎其实不可用 → 卸载再加载（真重启）；
+       ③ **重排一次分析** —— 引擎若在重启，等它就绪后 onStatus → syncUI 会自己再排。
+     ★ 不是"卡了才做"：没卡的时候点它也有用（相当于刷新状态 + 重排一次当前局面），
+       所以按钮不做任何"你不需要点"的拦截，点了就有反馈。 */
+  const btnRefresh = $('btn-engine-refresh');
+  if (btnRefresh) {
+    btnRefresh.onclick = async e => {
+      e.stopPropagation();
+      if (btnRefresh.dataset.busy === '1') return;          // 防连点
+      btnRefresh.dataset.busy = '1';
+      const wasStuck = anaBusy && anaBusySince && (Date.now() - anaBusySince > REFRESH_STUCK_MS);
+      const waited = anaBusySince ? Math.round((Date.now() - anaBusySince) / 1000) : 0;
+
+      /* ① 放开闸门 */
+      anaBusy = false;
+      anaPoke = false;
+      anaTimeouts = 0;
+      anaBusySince = 0;
+      anaForceCur = true;        // 逼它把当前局面重算一遍（选点/胜率重新上屏）
+      /* ★ 欠账也一起清掉（2026-10-06 晚，实测 _cdp_refresh.mjs）。
+         原来只清了闸门、留着队列，于是状态栏写着「清了 N 条待补账」而队列其实还在
+         —— 文案和事实不符，而且那份队列可能正是"卡住"的残留（里面混着已撤销手数）。
+         清掉它，让分析从当前局面干净地重来一遍；欠的历史会由后续落子重新入队。 */
+      const pending = anaQueue.length;
+      anaQueue = [];
+
+      let note = '已刷新';
+      if (wasStuck) note += '（原来卡了 ' + waited + ' 秒）';
+      if (pending) note += '（清了 ' + pending + ' 条待补账）';
+
+      try {
+        /* ② 引擎状态：先自己查一遍（别信界面上可能已经过期的灯） */
+        let s = null;
+        try { s = await window.api.engineStatus(); } catch (err) { s = null; }
+        applyEngineStatus(s);
+        const a = readEngineState(s, 'analyze');
+
+        /* 灯说就绪、但分析请求其实回不来（engineNote 有内容）→ 真重启一次。
+           ⚠️ 只在**已经出过错**或**状态灯是 error** 时重启 ——
+              不能看见"就绪"就重启（那会把正常使用的引擎白白断掉十几秒）。 */
+        const broken = !!(s && s.analyze && (s.analyze.state === 'error' || a.error));
+        if (broken) {
+          note += ' · 引擎不正常，正在重启';
+          flash(note);
+          await window.api.engine.unload('katago').catch(() => { });
+          /* 等进程真正退干净再拉 —— launch() 开头是 `if (e.proc) return`，
+             退不干净就拉不起来（这个坑在 main.js 里踩过）。 */
+          await new Promise(r => setTimeout(r, 1500));
+          const r = await window.api.engine.load('katago').catch(() => null);
+          note += (r && r.error) ? ('（重启失败：' + r.error + '）') : '（十几秒后变绿）';
+        }
+      } catch (err) {
+        note += ' · 刷新时出错：' + ((err && err.message) || err);
+      }
+
+      /* ③ 重排分析 + 让 AI 如果该走就走（顺序无所谓，两者各自有闸门） */
+      scheduleAnalysis(0, true);
+      if (needAIMove()) scheduleAIMove(0);
+      draw();
+      flash(note);
+      setTimeout(() => { btnRefresh.dataset.busy = '0'; }, 400);
+    };
+  }
   /* 版本号填到「帮助」面板上 —— 用户判断「要不要更新」的唯一依据（包名不带版本号）。 */
   window.api.appVersion().then(v => { const el = $('help-ver'); if (el) el.textContent = 'v' + v; }).catch(() => { });
   window.api.onStatus(applyEngineStatus);
@@ -4252,13 +4460,19 @@ function renderMoveList() {
         ? '<span class="dl rv-ok" title="' + t + '">0</span>'
         : '<span class="dl ' + (lv ? 'rv-' + lv.cls : '') + '" title="' + t + '">−' + rvLoss.toFixed(1) + '</span>';
     } else {
-      /* 这一手让「下棋方」的胜率变化了多少（黑方胜率下降 = 白棋走得好） */
+      /* 这一手让「下棋方」的胜率变化了多少（黑方胜率下降 = 白棋走得好）
+         ★ 必须等这一手**算准了**才显示数字（evalSettled）。
+           否则刚落子那 0.3 秒的粗算值会先摆出来，过一会儿又变成收敛值 ——
+           用户看到的就是「数字自己跳」。没算准就先显示「…」。 */
       const h = state.history[i + 1], prev = state.history[i];
-      if (typeof h === 'number' && typeof prev === 'number') {
+      if (typeof h === 'number' && typeof prev === 'number' && evalSettled(i + 1)) {
         const d = (h - prev) * 100 * (m.color === 'b' ? 1 : -1);
         if (Math.abs(d) >= 0.05) {
           dl = `<span class="dl ${d < 0 ? 'bad' : ''}">${d > 0 ? '+' : ''}${d.toFixed(1)}%</span>`;
         }
+      } else if (typeof h === 'number' && !evalSettled(i + 1)) {
+        /* 还在算 → 给个占位，让用户知道这里会有数字（不是坏了） */
+        dl = '<span class="dl calc" title="这一手还在算，算准了才显示涨跌">…</span>';
       }
     }
     /* 试下（草稿）里下的手单独标出来 —— 免得过一会儿忘了自己在草稿里 */
@@ -4477,6 +4691,30 @@ window.addEventListener('keydown', e => {
      键位（2026-10-04 用户指定）：T 推荐点 · Z 坐标 · M 手数 · Y 音效 · X 形势 · N 拟人落子 · D 试下。
      ⚠️ 改键位时**记得同步 index.html 里各开关名字后面的括号**，以及 title 提示。 */
   switch (e.code) {
+    /* ★ Ctrl+Shift+D：分析链路自检（2026-10-06 晚新增）。
+       用户报过「推荐点不显示 / 那行『计算中… N』定住不动」——
+       那种情况下光看界面分不清是哪一环断了。这个键把那几项关键内部状态打在状态栏上，
+       用户截图给我就能直接定位（不用装调试器、不用连调试端口）。
+       ⚠️ 必须放在下面 `case 'KeyD'`（试下）**前面** —— switch 是顺序匹配的，
+          放后面就永远轮不到它。
+       ⚠️ 只读，不改任何状态 —— 自检本身绝不能影响正在跑的分析。 */
+    case 'KeyD': {
+      if (!(e.ctrlKey && e.shiftKey)) break;
+      e.preventDefault();
+      const cur = state.viewAt, n = state.moves.length;
+      flash('分析自检·局面: ' + n + '手·看第' + cur + '手'
+        + '·选点: ' + (state.candAt < 0 ? '还没算过' : ('第' + state.candAt + '手算的, 差' + (cur - state.candAt)))
+        + '·搜索量: ' + state.rootVisits
+        + '·请求: ' + (anaBusy ? '在跑' : '空闲')
+        + (anaQueue.length ? ('·欠账' + anaQueue.length + '手') : '')
+        + (anaForceCur ? '·待重算' : '')
+        + (state.noGame ? '·未开局' : '')
+        + (scoreBusy ? '·数子中' : '')
+        + (reviewBusy ? '·复盘/讲解中' : '')
+        + '·引擎: ' + (engineReady ? '就绪' : (engStates.analyze === 'loading' ? '加载中' : '未就绪'))
+        + (anaTimeouts ? ('·超时' + anaTimeouts + '次') : ''));
+      break;
+    }
     case 'ArrowLeft':  e.preventDefault(); $('btn-prev').click(); break;
     case 'ArrowRight': e.preventDefault(); $('btn-next').click(); break;
     case 'Home':       e.preventDefault(); $('btn-first').click(); break;
@@ -5440,6 +5678,8 @@ async function runBatchCoach() {
       const sl = x && x.root && x.root.scoreLead;
       return (typeof sl === 'number') ? (isWhiteTurn(x) ? -sl : sl) : undefined;
     });
+    /* ★ 同上：整盘讲解也是同一档搜索量一次算完的，精度标记统一填上 */
+    state.histVisits = turns.map(() => reviewVisits());
     renderMoveList();
     renderCurve();
 
