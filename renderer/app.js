@@ -1468,12 +1468,10 @@ function parseSGF(text) {
   /* ★ 盘面大小必须**在遍历之前**读出来 —— 下面判越界坐标要用它
      （最典型的是 `zz` 这种题集分隔标记，不判就会算出下标 500 越出 361 格的盘面）。
      SZ 出现在根节点，而 nodes 就是从根节点开始按主分支收集的，所以扫得到。 */
-  let boardSize = 19;
-  for (const t of nodes) {
-    if (t.id !== 'SZ' || !t.vals.length) continue;
-    const n = parseInt(t.vals[0], 10);
-    if (n >= 2 && n <= 52) { boardSize = n; break; }
-  }
+  /* nodes 是 { props, at, end }，SZ 在 props 内；复用属性读取器，
+     避免把节点当成属性后永远回退到 19 路。 */
+  const declaredSize = parseInt(firstProp('SZ'), 10);
+  const boardSize = declaredSize >= 2 && declaredSize <= 52 ? declaredSize : 19;
 
   const moves = [], comments = [], mainLine = [], seps = [];
   /* 根节点（棋谱开头那个节点）的说明文字 —— 单独存，不占「第 0 手」那个键。
