@@ -3027,15 +3027,23 @@ function truncateAnalysisTo(len) {
   /* candAt / ownAt 也别指着不存在的局面，否则候选点和形势雾会被当成过期的画淡。 */
   if (state.candAt > len) state.candAt = -1;
   if (state.ownAt > len) { state.ownership = null; state.ownAt = -1; }
-  /* ★★ shownAt 也要跟着退（2026-10-07 新增，治「悔棋后选点/形势卡住不动」）。
-     为什么必须有这一句：`shownAt` 是「屏幕上这批结果算的是第几手」。
-     悔棋把局面变短之后，若 shownAt 还指着一个**已经不存在的手数**，
-     `runAnalysis` 的判据 `shownAt !== cur` 就变成一个**永远为假**的比较 ——
-     它以为当前局面已经算过、直接去补历史欠账，而当前局面**永远不再重算**：
-     表现就是候选点 / 胜率 / 形势雾**停在旧值不再更新**（用户报的"卡住不显示"）。
-     原来只退了 candAt / ownAt，漏了 shownAt（它不在 state 上，是个模块级变量，
-     所以早先几次审查都没扫到）。 */
-  if (shownAt > len) shownAt = -1;
+  /* ★★★ `shownAt` 必须与 `candAt` **同进同退**（2026-10-07 日志定位到的真根因）。
+     它们是"同一批结果"的一对记号：
+       candAt = 这批候选点是第几手算的（画盘用）
+       shownAt = 屏幕上这批结果算的是第几手（要不要重算用，判据 shownAt !== cur）
+     ⚠️ 原来这里只写了 `if (shownAt > len) shownAt = -1;` —— 只管了"大于新长度"这一种情况。
+        而悔棋**退到某一手**时会出现：candAt（假设 6）> len（2）→ 被清成 -1；
+        但 shownAt 恰好**等于** 2（≤ len）→ 原样留着。
+        于是"这批选点废了"与"这个局面显示过了"同时成立 —— 死结：
+          · runAnalysis 判 `shownAt !== cur` 为假 → 跳过当前局面，不重算
+          · scheduleAnalysis 又因 `history[cur]` 有值 → 不入队
+        两头都不动手 → **那个局面永远不再分析**，界面就是
+        「计算中… N 定住不动、推荐点永远不出来」。
+        实测证据：调试实例的《分析链路.log》里出现
+          「run 认为已算过但 candAt=-1 ≠ viewAt=2」+ 前后都是 busy=false/force=false/hist[2]=有。
+     所以规矩是：**candAt 若失效，shownAt 一起失效**（要废一起废）。 */
+  if (state.candAt === -1) shownAt = -1;
+  else if (shownAt > len) shownAt = -1;
   /* 曲线 / 手数列表不用在这里刷 —— 调用方紧接着就 syncUI()，那里会重画。
      在这里刷等于每悔棋一次多两次全量重绘。 */
 }
