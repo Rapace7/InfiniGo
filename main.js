@@ -1317,6 +1317,43 @@ ipcMain.handle('records:openDir', () => { shell.openPath(RECORDS_DIR); return { 
      下载完从文件名看不出新旧，所以必须能在软件里看到当前版本。 */
 ipcMain.handle('app:version', () => app.getVersion());
 
+/* ---------- 分析链路事件日志（2026-10-07 新增，为定位"偶发卡住"） ----------
+   为什么要落盘而不是只打印在控制台：用户遇到的是**偶发**问题，而且他那边没有调试器。
+   把链路上每次关键决定（发了请求 / 结果被丢弃 / 该重算却没算 / 自愈触发…）
+   按时间写进文件，卡住之后直接读文件就能复原整个过程 —— 不用再靠"让他读状态栏"。
+
+   只记**关键节点**，不记每次都发生的琐事（否则文件会涨到没法看）：
+     · schedule / run 的进入与判断结果
+     · 请求发出、失败、被取消
+     · applyAnalysis 的返回值（有没有真上屏）
+     · 遍历循环为什么退出、为什么跳过
+   文件：engine-logs\<时间戳>-分析链路.log，每次启动一个（和引擎日志同一目录）。 */
+let diagLogFile = null;
+function diagLogPath() {
+  if (diagLogFile) return diagLogFile;
+  try {
+    fs.mkdirSync(LOG_DIR, { recursive: true });
+    const d = new Date();
+    const p = n => String(n).padStart(2, '0');
+    const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    diagLogFile = path.join(LOG_DIR, stamp + '-分析链路.log');
+  } catch (e) { diagLogFile = ''; }
+  return diagLogFile;
+}
+ipcMain.handle('diag:log', (_e, line) => {
+  const f = diagLogPath();
+  if (!f) return { ok: false };
+  try {
+    const d = new Date();
+    const t = String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0')
+      + ':' + String(d.getSeconds()).padStart(2, '0') + '.' + String(d.getMilliseconds()).padStart(3, '0');
+    fs.appendFileSync(f, t + ' ' + String(line) + '\n', 'utf8');
+    return { ok: true };
+  } catch (e) { return { ok: false, error: String(e.message) }; }
+});
+ipcMain.handle('diag:path', () => diagLogPath());
+
+
 /* 导入棋谱（2026-10-04 用户要求）：从电脑里挑 SGF，复制进棋谱库。
    为什么需要：棋谱库只读 records/ 目录 —— 用户拿到别人的棋谱或下载的古谱，
    以前只能自己手动拷文件夹，等于没有入口。
