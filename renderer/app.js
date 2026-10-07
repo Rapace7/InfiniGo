@@ -598,6 +598,36 @@ function tryPlay(x, y, byAI) {
   return true;
 }
 
+/* ---------- 从「当前局面」反推禁着点（2026-10-07 新增） ----------
+   为什么需要它：简单劫的禁着点是**由上一手决定的**，而悔棋会换掉上一手 ——
+   所以悔棋之后必须重算，不能清成 null（清了就等于放行，用户 2026-10-07 报过）。
+   反过来，悔棋**退掉一个"在别处走"的手**之后，劫其实又成立了，禁着点该回来。
+
+   判据与 tryPlay 里那段**完全一致**（单一来源，避免两处规则跑偏）：
+     上一手提了恰好 1 子、且落下的那颗子是**孤子**、且它只剩一口气
+     → 被提的那一点就是禁着点。
+   （为什么必须有「孤子」那条：倒扑时落子连着自己人，对方回提会一口气提走 ≥2 子、
+     局面并不重复，那是合法的好手 —— 原来漏了这条，把倒扑误判成劫，见 2026-10-06 的记录。）
+
+   实现：不打分叉记录，直接从棋盘现状算 —— 「上一手提的那颗子」在棋盘上的那一格
+   就是劫点，而它现在的气数正好反映了「刚落完 / 已被补劫」两种情形。 */
+function koFromBoard(b, moves) {
+  const last = moves[moves.length - 1];
+  if (!last || last.pass || last.captured !== 1) return null;
+  const kx = last.x, ky = last.y;
+  const ki = idx(kx, ky);
+  if (b[ki] === 0) return null;                 // 落子已被提掉（不可能，防御性）
+  /* 判据①：落下的这颗是**孤子**（四邻没有同色子） */
+  for (const [nx, ny] of neighbors(kx, ky)) {
+    if (b[idx(nx, ny)] === b[ki]) return null;
+  }
+  /* 判据②：这颗孤子只剩**一口气** —— 那口气就是被提子原来的位置 = 劫点 */
+  const g = group(b, kx, ky);
+  if (g.libs.size !== 1) return null;
+  const lib = g.libs.values().next().value;
+  return { x: lib % N, y: (lib / N) | 0 };
+}
+
 canvas.addEventListener('click', e => {
   const rect = canvas.getBoundingClientRect();
   const mx = e.clientX - rect.left;
@@ -1095,7 +1125,16 @@ $('btn-undo').onclick = () => {
     }
   }
   state.toMove = sideToMove(state.moves.length);
-  state.koPoint = null;          // 局面变了，打劫禁着点随之失效
+  /* ★★ 禁着点必须**重新算出来**，不能清成 null（2026-10-07 用户报的真 bug）。
+     原来这里写的是 `state.koPoint = null;`，注释说「局面变了，打劫禁着点随之失效」——
+     那句话只对了一半：**退掉了提劫那一手**时它确实该失效，但**退到"刚提完劫"那个局面**时
+     它必须重新成立。清成 null 的后果就是用户报的：
+       白提劫 → 我禁着 → 我在别处走一手 → 白在别处走 → 我悔棋回到"白提完劫"
+       → 这时我居然能**直接提回去**（违反禁着点）。
+     复现证据见 dev\_cdp_ko_user.mjs（用用户自己那份 GN[打劫BUG] 棋谱走的整条链）。
+     ★ 同一处还有个反向错：悔棋**退掉一个"在别处走"的手**之后，劫其实又成立了
+       （禁着点该回来），而原来是一律清 null —— 两个方向都错。 */
+  state.koPoint = koFromBoard(boardAt(state.moves.length), state.moves);
   state.pv = null;               // 变化图基于当前候选点，局面变了就失效
   state.viewAt = state.moves.length;
   /* ★ 局面变短了 → 必须截断分析队列与走势数据（truncateAnalysisTo 的注释里有实测数据）。
