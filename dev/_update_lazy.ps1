@@ -12,12 +12,16 @@
 #     records\       ← 用户自己的棋谱，隐私
 #     userdata\      ← Chromium 缓存，体积大且无用
 #     start.bat      ← 本机专用的启动脚本（绕 ELECTRON_RUN_AS_NODE），与用户无关
+#     engine-logs\   ← **运行期**的引擎日志（★ 2026-10-07 补：原来漏了它，
+#                       结果把我的调试日志当"程序文件"复制进了懒人包，
+#                       用户在自己的懒人包里发现了那个 log）。
+#                       它是程序启动时自己生成的运行时目录，不属于程序本体。
 # ============================================================
 $ErrorActionPreference = 'Stop'
 
 $SRC  = 'D:\GoStudy\玄清围弈'
 $DEST = 'C:\Users\rapac\Desktop\RapaceGo懒人包'
-$EXCLUDE = @('settings.json', 'records', 'userdata', 'start.bat')
+$EXCLUDE = @('settings.json', 'records', 'userdata', 'start.bat', 'engine-logs')
 
 if (-not (Test-Path $SRC))  { throw "源目录不存在：$SRC" }
 if (-not (Test-Path $DEST)) { throw "懒人包目录不存在：$DEST" }
@@ -46,7 +50,16 @@ foreach ($n in $EXCLUDE) {
 if ($bad.Count) {
     Write-Host ("  已清掉测试残留：" + ($bad -join ', ') + "（多半是启动过包里的 exe 生成的）") -ForegroundColor Yellow
 } else {
-    Write-Host '  ✓ settings.json / records / userdata / start.bat 都不在（正确）'
+    Write-Host '  ✓ settings.json / records / userdata / start.bat / engine-logs 都不在（正确）'
+}
+# ★ 再兜一道：包内**任何**位置都不该有日志文件（除了引擎自己目录里那个 srv 日志）。
+#   我那个调试日志（*-分析链路.log）已经在新版里撤销了，但旧包/旧副本可能还留着。
+$stragglers = @(Get-ChildItem -LiteralPath $DEST -Recurse -File -Filter '*分析链路*' -ErrorAction SilentlyContinue)
+if ($stragglers.Count) {
+    $stragglers | Remove-Item -Force
+    Write-Host ("  ★ 清掉了 " + $stragglers.Count + " 个残留的调试日志（*分析链路.log）") -ForegroundColor Yellow
+} else {
+    Write-Host '  ✓ 没有残留的调试日志'
 }
 
 Write-Host '=== 3/4 核对版本号与关键文件 ==='
