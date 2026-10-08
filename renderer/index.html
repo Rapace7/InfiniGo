@@ -491,6 +491,22 @@
       </div>
     </div>
 
+    <!-- ★ 关于与更新（2026-10-08 用户要求）。
+         三件事：显示当前版本号、点一下查是否最新、一个按钮打开浏览器到最新版下载页。
+         ★ 下载地址一律用 `/releases/latest`（不是具体某个 tag）——
+           这样用户点开的**永远是最新那版**，我们不用改代码。
+         ★ 「打开下载页」这个按钮**任何时候都能点**（不依赖"检查"成功）——
+           万一网络被挡、检查失败，用户照样能去手动下载。 -->
+    <div class="setgroup">
+      <div class="setgroup-h">关于与更新</div>
+      <div class="setrow" style="align-items:flex-start">
+        <span class="setlb" title="当前在用的版本号（取自程序自带的版本信息）。">当前版本</span>
+        <span id="app-version" class="eng-check">读取中…</span>
+        <button id="btn-check-update" title="问一下 GitHub 上最新版是哪个，和当前版本比一比。要联网，只发一次很小的请求。">检查更新</button>
+        <button id="btn-open-download" title="用系统浏览器打开 GitHub 上这个软件的最新版页面（在那下载）。检查失败或想自己挑版本时用这个。">去下载页</button>
+      </div>
+    </div>
+
     <datalist id="recent-analyzeWeight"></datalist>
     <datalist id="recent-playWeight"></datalist>
     <datalist id="recent-coachWeight"></datalist>
@@ -577,7 +593,8 @@
         <li><b>棋谱库</b><span>顶栏「棋谱库」打开：每一行就是一份棋谱，可<b>打开 / AI 复盘 / 复盘报告 / 备注 / 改名 / 删除</b>，上面有搜索框；顶部还有「导入棋谱」和「更改文件夹…」（把棋谱库换到别的盘）。列表里会标出「已复盘」和「带讲解」。棋谱存在软件目录的 <b>records/</b> 里（位置也能在「设置 → 数据 → 棋谱库文件夹」里改）。</span></li>
         <li><b>对局计时</b><span>新对局里可选超快棋 / 快棋 / 慢棋 / 职业赛 / 世界大赛；右侧两块表显示双方用时，读秒会变色。</span></li>
         <li><b>改名字</b><span>右侧的名字<b>点一下就能改</b>（比如把 PLAYER 改成你的名字），导出的棋谱会把名字写进去；打开带名字的棋谱（如古谱）也会自动显示。</span></li>
-        <li><b>设置</b><span>换 KataGo 程序或权重路径，保存后引擎自动重启，不用重开软件。</span></li>
+        <li><b>设置</b><span>换 KataGo 程序或权重路径，保存后引擎自动重启，不用重开软件。里面还有「<b>关于与更新</b>」：看当前版本号、<b>检查更新</b>（问一下 GitHub 上有没有新版）、以及一个<b>去下载页</b>的按钮（用浏览器打开最新版的发布页）。</span></li>
+        <li><b>这个软件不联网</b><span><b>除了「检查更新」按一下会问一次 GitHub，软件其他地方一律不出网</b>：KataGo 和 LoGos 都是本机跑的程序，软件跟 LoGos 说话走的是<b>本机回环</b>（127.0.0.1，数据不出你的电脑）。<b>检查更新只在你点的时候发一次请求</b>，不自动、不后台、不上报任何东西；连不上就明说连不上，不会假装"已是最新"。</span></li>
       </ul>
 
       <h3>四种规则</h3>

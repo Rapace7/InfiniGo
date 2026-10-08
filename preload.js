@@ -102,4 +102,14 @@ contextBridge.exposeInMainWorld('api', {
     saveCoach: (name, json) => ipcRenderer.invoke('records:saveCoach', name, json),
     readCoach: name => ipcRenderer.invoke('records:readCoach', name),
   },
+
+  /* 关于与更新（2026-10-08 用户要求，放在设置面板里）
+     info()         → { version, downloadUrl, lastCheck }
+     checkUpdate()  → { ok:true, current, latest, upToDate, ... } | { ok:false, error }
+     openDownload() → 用系统浏览器打开 GitHub 上最新版的发布页 */
+  app: {
+    info:         () => ipcRenderer.invoke('app:info'),
+    checkUpdate:  () => ipcRenderer.invoke('app:checkUpdate'),
+    openDownload: () => ipcRenderer.invoke('app:openDownload'),
+  },
 });

@@ -382,6 +382,18 @@ and cross-game race regression. They run in seconds after every change.
 
 ## FAQ
 
+**"How do I know if there's a newer version?"**
+Settings → **关于与更新** → **检查更新**. It asks GitHub what the latest release is and compares
+it with your build. The **去下载页** button next to it opens the latest release page in your browser
+(it always points at the newest release).
+
+**"Does this app need the internet? Does it phone home?"**
+**Apart from that one update check, nothing here touches the network.** KataGo and LoGos are local
+processes; the app talks to LoGos over **loopback** (127.0.0.1), so no data leaves your machine.
+The update check fires **only when you click it** — no auto-check, no background calls, no telemetry.
+If it can't reach GitHub it says so instead of pretending you're up to date.
+(Enforced by `dev/_lint_net.mjs`, which fails if anything outside the update check reaches the net.)
+
 **"Engine not found"?** Open Settings and fix the paths (see the table above).
 
 **"I can't see my downloaded weights in the file picker"?**

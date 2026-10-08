@@ -11,7 +11,7 @@
  *   · 而 human 权重是「模仿人类」，它的胜率标尺偏业余 —— 当分析数字用不准。
  *   两条通道在 IPC 上分开：engine:analyze / engine:play。
  */
-const { app, BrowserWindow, ipcMain, shell, dialog, screen } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, screen, net } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
@@ -23,8 +23,9 @@ const http = require('http');       // LoGos 靠 HTTP 说话（llama-server 托�
    审计了一遍写盘的地方，`userdata\` 里 8.1 MB 有 7.9 MB 是 **GPU / 着色器缓存**
    （GrShaderCache 4.8 + GPUCache 1.6 + ShaderCache 0.5 + Dawn* 1.1）——
    它们是 Chromium 自己管的，会随驱动升级重新生成。这里把**磁盘缓存**压到 32 MB：
-   本软件不联网、没有网页资源，HTTP 缓存本来就近乎为零，这个上限只当保险绳用
-   （万一将来加了什么联网功能，也不会失控）。
+   本软件不加载任何网页资源，HTTP 缓存本来就近乎为零，这个上限只当保险绳用
+   （2026-10-08 起有一个**例外**：设置里的「检查更新」会问一次 GitHub ——
+    那是极低频的单次请求、不是为了缓存网页资源，所以这个上限照旧够用）。
    ⚠️ 必须在 app ready **之前**设置，ready 之后开关就不生效了。 */
 try {
   app.commandLine.appendSwitch('disk-cache-size', String(32 * 1024 * 1024));   // 32 MB
@@ -197,6 +198,10 @@ function readConfig() {
       coachWeight:   usable(raw.coachWeight,   d.coachWeight,   true),
       recordsDir:    typeof raw.recordsDir === 'string' ? raw.recordsDir.trim() : '',
       recent:        normRecent(raw.recent),
+      /* ★ 2026-10-08：应用自己的小状态（目前只放"上次检查更新是什么时候"）。
+         刻意**不塞进上面的配置字段**里 —— 那五项是"路径"，混进别的会让人看不懂；
+         而且 settings:save 会按"路径"的逻辑处理它们。 */
+      store:         (raw.store && typeof raw.store === 'object') ? raw.store : {},
       /* ★ fellBack 目前**没有界面消费**（留着当预留字段）——
          原本想"回退时给用户提个醒"，但实测那个场景（拷来的整包、挪过位置）
          用户本来就知道自己干了什么，多一句提示反而吵。
@@ -207,6 +212,7 @@ function readConfig() {
     return Object.assign(d, {
       recordsDir: '',
       recent: { analyzeWeight: [], playWeight: [], coachWeight: [] },
+      store: {},
       fellBack: false,
     });
   }
@@ -1120,6 +1126,15 @@ let RECORDS_DIR = path.join(BASE_DIR, 'records');
 function refreshRecordsDir(dir) {
   const want = (dir !== undefined ? dir : (PATHS && PATHS.recordsDir) || '').trim();
   RECORDS_DIR = want || path.join(BASE_DIR, 'records');
+  /* ★★ 2026-10-08 加：环境变量 RAPACEGO_RECORDS 可以**强制**把棋谱库指到别处。
+     为什么需要它（血的教训）：自动化测试要拿真实棋谱当夹具，于是往 records\ 里拷文件、
+     跑完再删。有一次清理写宽了，把用户自己下的一盘棋连同一份职业棋谱**一起删掉了**
+     （后来从回收站和备份里捞回来的）。根因就是"测试和用户数据共用一个目录"。
+     现在测试实例只要设了这个环境变量，读写就全在临时目录里，**根本碰不到真棋谱**。
+     ★ 只在"用户没在设置里指定过棋谱库"时才生效 ——
+       用户自己改过的位置优先级更高，不能被环境变量顶掉。 */
+  const forced = String(process.env.RAPACEGO_RECORDS || '').trim();
+  if (forced && !want) RECORDS_DIR = forced;
   try { fs.mkdirSync(RECORDS_DIR, { recursive: true }); } catch (e) { /* 已存在就算了 */ }
 }
 refreshRecordsDir();
@@ -1448,6 +1463,9 @@ function normalizeConfig(c) {
     /* 棋谱库位置（2026-10-05 用户要求可改）。★ 允许为空串 ——
        空 = 用默认（程序目录下的 records\），这也是出厂行为。 */
     recordsDir:    (c && typeof c.recordsDir === 'string') ? c.recordsDir.trim() : '',
+    /* 应用自己的小状态（"上次检查更新"这类）。★ 这里**必须原样透传**：
+       它是 settings:save 存盘时的白名单字段之一，漏了就会被丢掉。 */
+    store:         (c && c.store && typeof c.store === 'object') ? c.store : {},
   };
 }
 
@@ -1623,6 +1641,114 @@ async function engineCheck() {
 }
 ipcMain.handle('engine:check', () => engineCheck());
 
+/* ==================== 检查更新（2026-10-08 用户要求）====================
+   要做的三件事：
+     ① 显示当前版本号 —— 直接读 package.json 的 version（`app.getVersion()`）
+     ② 点一下检查是否最新 —— 问一次 GitHub，和本地版本比
+     ③ 一个按钮打开浏览器到**最新版的下载页**
+
+   ★ 怎么问 GitHub（两条路，先 API 后网页）：
+     · 首选 `api.github.com/repos/<owner>/<repo>/releases/latest`
+       —— 直接给 tag_name，且**只返回正式版**（草稿和预发布自动排除）。
+     · 未登录时 API 限流 60 次/小时；被限流就去解析网页
+       `github.com/.../releases/latest` 的标题（形如「v0.1.22 · 说明」），
+       从标题里抠出版本号。两条都失败就如实报"检查失败"，不假装是最新。
+   ★ 下载地址**永远用 `/releases/latest`**（不是具体 tag）——
+     这样用户点开的永远是最新那版，我们不用改代码。 */
+const REPO_OWNER = 'Rapace7';
+const REPO_NAME = 'RapaceGo';
+const DL_PAGE = 'https://github.com/' + REPO_OWNER + '/' + REPO_NAME + '/releases/latest';
+
+function parseVer(s) {
+  const m = String(s || '').match(/(\d+)\.(\d+)\.(\d+)/);
+  return m ? [+m[1], +m[2], +m[3]] : null;
+}
+/* 本地是不是已经不比远端新了（相等也算"最新"） */
+function verAtLeast(cur, latest) {
+  const a = parseVer(cur), b = parseVer(latest);
+  if (!a || !b) return null;                       // 有一边解析不出来 → 说不准
+  for (let i = 0; i < 3; i++) {
+    if (a[i] > b[i]) return true;
+    if (a[i] < b[i]) return false;
+  }
+  return true;
+}
+
+async function fetchText(url, timeoutMs) {
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs || 12000);
+  try {
+    const r = await net.fetch(url, {
+      signal: ac.signal,
+      headers: { 'User-Agent': 'RapaceGo', 'Accept': 'application/vnd.github+json, text/html' },
+    });
+    return { ok: r.ok, status: r.status, text: await r.text() };
+  } finally { clearTimeout(t); }
+}
+
+ipcMain.handle('app:info', () => ({
+  version: app.getVersion(),
+  downloadUrl: DL_PAGE,
+  lastCheck: (PATHS.store && PATHS.store.lastUpdateCheck) || 0,
+}));
+
+ipcMain.handle('app:openDownload', async () => {
+  try { await shell.openExternal(DL_PAGE); return { ok: true }; }
+  catch (e) { return { error: String((e && e.message) || e) }; }
+});
+
+ipcMain.handle('app:checkUpdate', async () => {
+  const cur = app.getVersion();
+  let tag = null, releaseName = '', how = '';
+
+  /* ① 官方 API */
+  try {
+    const r = await fetchText('https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME + '/releases/latest', 12000);
+    if (r.ok) {
+      const j = JSON.parse(r.text);
+      if (j && j.tag_name && j.prerelease !== true && j.draft !== true) {
+        tag = j.tag_name; releaseName = j.name || ''; how = 'api';
+      }
+    }
+  } catch (e) { /* 下面走网页 */ }
+
+  /* ② 网页兜底（API 限流时用） */
+  if (!tag) {
+    try {
+      const r = await fetchText('https://github.com/' + REPO_OWNER + '/' + REPO_NAME + '/releases/latest', 12000);
+      if (r.ok) {
+        /* 标题形如「Release v0.1.22 · 说明 · Rapace7/RapaceGo」或 og:title「v0.1.22 · 说明」 */
+        const m = r.text.match(/Release\s+v(\d+\.\d+\.\d+)/i) || r.text.match(/og:title"\s+content="v?(\d+\.\d+\.\d+)/i);
+        if (m) { tag = 'v' + m[1]; how = 'web'; }
+      }
+    } catch (e) { /* 报失败 */ }
+  }
+
+  if (!tag) {
+    return { ok: false, current: cur, error: '连不上 GitHub（或网络被挡）—— 待会儿再试，不影响用。' };
+  }
+
+  const latest = tag.replace(/^v/i, '');
+  /* 记下"上次检查时间"，下次打开设置面板能显示（★ 不影响判断，纯展示） */
+  try {
+    PATHS.store = Object.assign({}, PATHS.store, { lastUpdateCheck: Date.now() });
+    writeConfig(Object.assign({}, normalizeConfig(PATHS), { recent: PATHS.recent, store: PATHS.store }));
+  } catch (e) { /* 记不上就算了，不影响结果 */ }
+
+  const atLeast = verAtLeast(cur, latest);
+  return {
+    ok: true,
+    current: cur,
+    latest: latest,
+    latestTag: tag,
+    releaseName: releaseName,
+    upToDate: atLeast === true,
+    uncertain: atLeast === null,      // 版本号格式怪（比如本地是 dev）→ 说不准
+    via: how,
+    downloadUrl: DL_PAGE,
+  };
+});
+
 /* 弹系统文件选择框 —— 只返回选中的路径和检测结果，**不保存**（前端先给用户看一眼） */
 ipcMain.handle('settings:choose', async (_e, kind) => {
   const cur = normalizeConfig(PATHS);
@@ -1726,9 +1852,12 @@ ipcMain.handle('settings:save', (_e, c) => {
     if (isDefault(k)) recentSrc[k] = '';
   }
   const rec = withRecent(PATHS.recent, recentSrc);
-  const w = writeConfig(Object.assign({}, onDiskCfg, { recent: rec }));
+  /* ★ store（应用小状态，如"上次检查更新"）同样要活着传下去 ——
+     它是 settings:save 的白名单字段之一，漏了就每次保存都被清掉。 */
+  const store = Object.assign({}, PATHS.store, n.store);
+  const w = writeConfig(Object.assign({}, onDiskCfg, { recent: rec, store: store }));
   if (w.error) return { error: '写入 settings.json 失败：' + w.error };
-  PATHS = Object.assign({}, n, { recent: rec });   // ★ 内存里保留**解析后**的路径（引擎要按它起）
+  PATHS = Object.assign({}, n, { recent: rec, store: store });   // ★ 内存里保留**解析后**的路径（引擎要按它起）
   /* ★ 棋谱库位置变了 → 切过去，并把老位置的棋谱**复制**一份过去（老的不删）。 */
   refreshRecordsDir();
   const moved = migrateRecords(oldRecordsDir, RECORDS_DIR);

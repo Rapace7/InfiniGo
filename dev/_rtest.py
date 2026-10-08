@@ -173,6 +173,17 @@ if port_busy():
     kill_my_leftovers()
 env = dict(os.environ)
 env.pop('ELECTRON_RUN_AS_NODE', None)
+# ★★ 2026-10-08：把测试实例的**棋谱库**指到一个临时目录，别碰真实的 records\。
+#    血的教训：测试要拿真棋谱当夹具，往 records\ 里拷、跑完再删；
+#    有一次清理写宽了，把用户自己下的一盘棋和一份职业棋谱一起删了（后来从回收站捞回）。
+#    根因就是"测试与用户数据共用一个目录"。
+#    现在：默认就用 <项目>\_trash\records_test\，测试怎么折腾都伤不到真棋谱。
+#    想临时用真棋谱测，就自己设 RAPACEGO_RECORDS 覆盖。
+if not os.environ.get('RAPACEGO_RECORDS'):
+    _test_records = os.path.join(G, '_trash', 'records_test')
+    os.makedirs(_test_records, exist_ok=True)
+    env['RAPACEGO_RECORDS'] = _test_records
+    print('测试棋谱库: %s（真棋谱不受影响）' % _test_records, flush=True)
 os.makedirs(G + '_trash', exist_ok=True)          # 运行日志也丢进 _trash，根目录保持干净
 lf = open(G + '_trash/_run.log', 'w', encoding='utf-8')
 proc = subprocess.Popen([EXE, '--remote-debugging-port=9333', APP], env=env,

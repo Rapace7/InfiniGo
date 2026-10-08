@@ -5143,6 +5143,67 @@ function fillRecentWeights(recent) {
   }
 }
 
+/* ==================== 关于与更新（2026-10-08 用户要求）====================
+   三件事：显示当前版本号 / 点一下查是否最新 / 一个按钮打开浏览器去下载页。
+
+   ★★ 本软件**除了这里，任何地方都不出网**（审计过）：
+        · KataGo、llama-server 都是本机子进程，不联网；
+        · 软件自己跟 LoGos 说话走的是 127.0.0.1 的本地 HTTP（loops back，不出网卡）；
+        · 引擎配置里出现的那些 https:// 全是**注释**（KataGo 自带的文档链接），不是请求。
+      只有「检查更新」这一个按钮会发一次请求到 GitHub —— 而且**只在你点它的时候发**，
+      不自动、不后台、不上报任何东西。 */
+const REPO_PAGE = 'https://github.com/Rapace7/RapaceGo/releases/latest';
+
+function appVerText(txt, cls) {
+  const el = $('app-version');
+  if (!el) return;
+  el.classList.remove('ok', 'bad');
+  if (cls) el.classList.add(cls);
+  el.textContent = txt;
+}
+
+/* 打开设置面板时读一次版本号（本地读，不发请求） */
+async function loadAppVersion() {
+  try {
+    const i = await window.api.app.info();
+    appVerText('v' + i.version);
+  } catch (e) { appVerText('（读不到版本号）'); }
+}
+
+const btnCheckUpdate = $('btn-check-update');
+if (btnCheckUpdate) {
+  btnCheckUpdate.onclick = async () => {
+    const old = btnCheckUpdate.textContent;
+    btnCheckUpdate.disabled = true;
+    btnCheckUpdate.textContent = '检查中…';
+    appVerText('正在问 GitHub…');
+    let r = null;
+    try { r = await window.api.app.checkUpdate(); } catch (e) { r = null; }
+    if (!r || r.ok !== true) {
+      /* ★ 检查失败**只说实话** —— 绝不显示"已是最新"。（网络被挡 / GitHub 抽风都可能） */
+      appVerText('检查失败：' + ((r && r.error) || '连不上 GitHub'), 'bad');
+    } else if (r.uncertain) {
+      appVerText('当前 v' + r.current + '，最新 ' + r.latest + '（你的版本号格式特殊，自己看一眼）');
+    } else if (r.upToDate) {
+      appVerText('已是最新（v' + r.current + '）', 'ok');
+    } else {
+      appVerText('有新版本 v' + r.latest + '（你在用 v' + r.current + '）—— 点右边「去下载页」', 'bad');
+    }
+    btnCheckUpdate.disabled = false;
+    btnCheckUpdate.textContent = old;
+  };
+}
+
+const btnOpenDownload = $('btn-open-download');
+if (btnOpenDownload) {
+  btnOpenDownload.onclick = async () => {
+    /* 不依赖"检查"是否成功 —— 这个按钮任何时候都能用（网络被挡时用户照样能手动去下） */
+    let r = null;
+    try { r = await window.api.app.openDownload(); } catch (e) { r = null; }
+    if (!r || r.ok !== true) flash('打不开浏览器：' + ((r && r.error) || '系统拒绝了') + ' —— 可以手动访问 ' + REPO_PAGE);
+  };
+}
+
 async function openSettings() {
   const info = await window.api.settings.get();
   setCfg = Object.assign({}, (info && info.config) || {});
@@ -5153,6 +5214,9 @@ async function openSettings() {
      清成提示语，要看的自己点「检查」——反正那次探测只花 0.1 秒。 */
   const ec = $('eng-check');
   if (ec) { ec.classList.remove('ok', 'bad'); ec.textContent = '点「检查」看结果'; }
+  /* 版本号是本地读的（不发请求）；更新状态**不跨次沿用** —— 和自检一个道理：
+     上次查出来"有新版本"，用户可能已经下过新版了，留着会误导。 */
+  loadAppVersion();
   SET_MASK.classList.add('open');
   await refreshSettingsMarks();
 }
@@ -5386,12 +5450,20 @@ function coachMatrix(board) {
       （「白棋在C3的应对是非常标准的」），读起来像在讲已经发生的事，是逻辑错误。
       条件句输出的自然就是「如果……那么……」，逻辑对，内容也不减。
       （加"这是建议、还没落子"之类的约束词它**根本不理**——7B 的指令遵循就这么弱。） */
-function coachPrompt(moves, board, color, point) {
+function coachPrompt(moves, board, color, point, onset) {
   return COACH_SYS + '\n'
     + '以下是当前的对局记录：\n\n' + coachMoveList(moves)
     + '\n\n\n当前盘面情况为:' + coachMatrix(board)
     + '\n其中1表示黑棋，-1表示白棋，0表示空位。\n'
-    + '<reasoning>\n如果' + (color === 'b' ? '黑棋' : '白棋') + '下在' + point + '，';
+    + '<reasoning>\n如果' + (color === 'b' ? '黑棋' : '白棋') + '下在' + point + '，'
+    /* ★★ 2026-10-08：「分析讲解」用的是**已经下出来的那一手**，要讲的是
+       「这一手之后会怎样」，不是「该下在哪」。原来的 prompt 只有前半句，
+       模型于是顺着「这手好不好 / 该下哪」去讲，用户实测抱怨：
+       「这分析讲解应该是如果下在这里会怎样啊，而不只是应该下在哪里」。
+       这里补一句强制要求，**只在传了 onset 时加**（推荐落点讲解不传，保持原样）。 */
+    + (onset ? ('\n（这一手已经下出来了' + onset + '。请**先直接说这一手之后会发生什么**：'
+      + '它碰到了哪些棋子、切断了什么、自己多了或少了气、对方接下来最可能的应手是什么；'
+      + '然后再讲这样下划不划算。不要重复上面的胜率数字，也不要说「应该下在别处」。）') : '');
 }
 
 /* 清掉它偶尔带出来的标签和结论框 */
@@ -5440,14 +5512,19 @@ function trimCoachTail(t) {
 }
 
 /* 预填是条件句「如果白棋下在C3，」，模型接着写「那么黑棋很可能……」——
-   渲染时把预填那半句拼回去，读起来才是一句完整的话。 */
-function fixCoachHead(t, point, color) {
-  return '如果' + (color === 'b' ? '黑棋' : '白棋') + '下在' + point + '，' + String(t || '');
+   渲染时把预填那半句拼回去，读起来才是一句完整的话。
+
+   ★ 2026-10-08：多了一种开头 `head`（给「分析讲解」用）——
+     那种场景下问的是**实际下出来的那一手**，所以要写成「这一手 X（...）下出来，」
+     而不是「如果下在 X，」。不传 head 时保持老行为（推荐落点讲解走这条）。 */
+function fixCoachHead(t, point, color, head) {
+  const pre = head || ('如果' + (color === 'b' ? '黑棋' : '白棋') + '下在' + point + '，');
+  return pre + String(t || '');
 }
 
 /* 一段最终要上屏的讲解：清洗 → 去尾 → 补开头 */
-function coachTextReady(raw, point, color) {
-  return fixCoachHead(trimCoachTail(cleanCoachText(raw)), point, color);
+function coachTextReady(raw, point, color, head) {
+  return fixCoachHead(trimCoachTail(cleanCoachText(raw)), point, color, head);
 }
 
 /* 这段讲解"能不能用"？——不行就重试一次（两次里挑可用的）。
@@ -5864,15 +5941,36 @@ async function runAnalysisExplain() {
     const lead = document.createElement('div');
     lead.className = 'ph';
     /* 「当时」两个字不能省 —— 这个胜率是**这一手之前**那个局面的，
-       跟上面胜率条（当前局面）不是一个数，不写清楚会让人对不上。 */
+       跟上面胜率条（当前局面）不是一个数，不写清楚会让人对不上。
+       ★ 2026-10-08 改：下错了的时候**要把"你实际下了哪"也写出来** ——
+         原来只写「AI 当时更倾向 D8」，用户会以为下面那段讲的是 D8（而它确实讲错了，见下方注释）。
+         现在先交代 AI 想下哪、再交代实际下在哪，下面那段讲的**永远是实际这一手**。 */
     const leadTxt = same
-      ? ('AI 当时想下的也是这里（' + best.move + '，' + sideTxt + '棋当时胜率 ' + (best.winrate * 100).toFixed(1) + '%）：')
-      : ('AI 当时更倾向 ' + best.move + '（' + sideTxt + '棋当时胜率 ' + (best.winrate * 100).toFixed(1) + '%）：');
+      ? ('AI 当时想下的也是这里（' + best.move + '，' + sideTxt + '棋当时胜率 '
+        + (best.winrate * 100).toFixed(1) + '%）。下面讲这一手：')
+      : ('AI 当时想下的是 ' + best.move + '（' + sideTxt + '棋当时胜率 '
+        + (best.winrate * 100).toFixed(1) + '%）；实际下的是 ' + pt + '。下面讲实际这一手：');
     lead.textContent = leadTxt;
     body.insertBefore(lead, why);
 
     const typer = makeTyper(why);
-    const ask = () => coachAsk(coachPrompt(before, boardAt(at - 1), m.color, best.move), 320, typer);
+    /* ★★ 讲的是**实际下的那一手（pt）**，不是 AI 推荐的那一手 —— 2026-10-08 修 bug。
+       原来这里无论哪种情况都传 `best.move`（AI 想下的点），于是「分析讲解」实际输出的是
+       「如果下在 AI 推荐点会怎样」，而用户问的是「我这一手怎么样」。
+       用户实测撞到：自己第 83 手亏 0.1%，讲解却整段在讲 AI 想下的 D8 —— 风马牛不相及。
+       现在两种情况都讲**实际这一手**：
+         · 下对了（same）→ 讲解就是这一手（与 AI 首选重合，等于讲首选）
+         · 下错了        → 讲这一手的后果，AI 倾向的那个点在前面作一句对照
+       prompt 也改了（coachPrompt 的 onset 参数）：**必须先交代这一手的直接后果**，
+       而不是只讲"该下哪"。开头也从「如果下在 X，」改成「这一手 X 下出来，」。 */
+    const onset = same
+      ? ('，和 AI 的首选是同一个点')
+      : ('，不过 AI 当时更倾向 ' + best.move + '（' + sideTxt + '棋当时胜率 '
+        + (best.winrate * 100).toFixed(1) + '%）');
+    /* 讲解正文的开头 —— 用「这一手 X 下出来，」而不是「如果下在 X，」，
+       因为这里讲的是**既成事实**（用户问"我这手怎么样"），不是假设。 */
+    const explainHead = '这一手 ' + pt + '（' + sideTxt + '棋第 ' + at + ' 手）下出来，';
+    const ask = () => coachAsk(coachPrompt(before, boardAt(at - 1), m.color, pt, onset), 320, typer);
     let r = await ask();
     if (!r) return;
     /* ★ 被取消时 main.js 会把**已收到的半截文本**带 `aborted: true` 回来
@@ -5880,12 +5978,12 @@ async function runAnalysisExplain() {
        半截文本有可能「够长 + 前 60 字有句号」而被当成完整讲解存进
        `.coach.json`，之后永不重讲（2026-10-06 审查发现：aborted 这个标记一直没人看）。 */
     if (r.aborted) { typer.finish('（已取消）'); return; }
-    let txt = coachTextReady(r.text, best.move, m.color);
+    let txt = coachTextReady(r.text, pt, m.color, explainHead);
     /* 太短 / 第一句没说完 → 重来一次；两次里挑能用的（都好就取长的）。 */
     if (!r.error && !coachUsable(txt)) {
       const r2 = await ask();
       if (r2 && !r2.error) {
-        const t2 = coachTextReady(r2.text, best.move, m.color);
+        const t2 = coachTextReady(r2.text, pt, m.color, explainHead);
         if (coachUsable(t2) || t2.length > txt.length) { txt = t2; r = r2; }
       }
     }
@@ -6065,13 +6163,22 @@ async function runBatchCoach() {
       if (!best) {
         leadTxt = '（这一手之前的局面没算出候选点）';
       } else {
-        /* 「当时」两个字不能省 —— 这是**这一手之前**那个局面的胜率 */
+        /* 「当时」两个字不能省 —— 这是**这一手之前**那个局面的胜率。
+           ★ 2026-10-08 与「分析讲解」同步修：这里原来也把 `best.move`（AI 想下的点）
+             传给了 LoGos，于是整盘讲解讲的都是"AI 该下哪"，而不是**实际下的这一手**会怎样。 */
         const same = String(best.move).toUpperCase() === pt.toUpperCase();
         leadTxt = same
-          ? ('AI 当时想下的也是这里（' + best.move + '，' + sideTxt + '棋当时胜率 ' + (best.winrate * 100).toFixed(1) + '%）：')
-          : ('AI 当时更倾向 ' + best.move + '（' + sideTxt + '棋当时胜率 ' + (best.winrate * 100).toFixed(1) + '%）：');
+          ? ('AI 当时想下的也是这里（' + best.move + '，' + sideTxt + '棋当时胜率 '
+            + (best.winrate * 100).toFixed(1) + '%）。下面讲这一手：')
+          : ('AI 当时想下的是 ' + best.move + '（' + sideTxt + '棋当时胜率 '
+            + (best.winrate * 100).toFixed(1) + '%）；实际下的是 ' + pt + '。下面讲实际这一手：');
         const before = state.moves.slice(0, at - 1);
-        const ask = () => coachAsk(coachPrompt(before, boardAt(at - 1), m.color, best.move), 320);
+        const onset = same
+          ? '，和 AI 的首选是同一个点'
+          : ('，不过 AI 当时更倾向 ' + best.move + '（' + sideTxt + '棋当时胜率 '
+            + (best.winrate * 100).toFixed(1) + '%）');
+        const explainHead = '这一手 ' + pt + '（' + sideTxt + '棋第 ' + at + ' 手）下出来，';
+        const ask = () => coachAsk(coachPrompt(before, boardAt(at - 1), m.color, pt, onset), 320);
         let r = await ask();
         if (!r) break;                          // 被别的请求取代 → 收工
         /* ★ 用户点了「停止」（或换棋谱）→ main.js 把半截文本带 `aborted: true` 回来。
@@ -6080,12 +6187,12 @@ async function runBatchCoach() {
            之后永不重讲。收工前把 batchStop 置上，下面那句提示也会说「已停」。
            （2026-10-06 审查发现：aborted 这个标记一直没人看。） */
         if (r.aborted) { batchStop = true; break; }
-        let txt = coachTextReady(r.text, best.move, m.color);
+        let txt = coachTextReady(r.text, pt, m.color, explainHead);
         /* 太短 / 第一句没说完 → 重来一次；两次里挑能用的（都好就取长的）。 */
         if (!r.error && !coachUsable(txt)) {
           const r2 = await ask();
           if (r2 && !r2.error) {
-            const t2 = coachTextReady(r2.text, best.move, m.color);
+            const t2 = coachTextReady(r2.text, pt, m.color, explainHead);
             if (coachUsable(t2) || t2.length > txt.length) { txt = t2; r = r2; }
           }
         }
