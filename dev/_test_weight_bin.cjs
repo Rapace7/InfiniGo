@@ -116,15 +116,12 @@ test('目录里什么都没有时原样返回、不抛异常', () => {
   assert.match(p, /b18c384nbt-humanv0\.bin\.gz$/);
 });
 
-/* ★★ 光修 defaultPaths 只能救"从没配过"的人。而报这个问题的用户**配过了** ——
-   他的 settings.json 里存着一条现在不存在的路径（挪过位置 / 手动选过旧文件）。
-   所以 normalizeConfig 也必须会回退，否则界面上还是「★ 找不到」、他根本不知道该选哪个。 */
+/* normalizeConfig 的沙箱：用"指向测试目录"的假 defaultPaths 顶掉真的，免得依赖本机布局 */
 function fixtureNormalize(files) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rapace-norm-'));
   for (const n of files) fs.writeFileSync(path.join(dir, n), 'stub');
   const context = vm.createContext({ fs, path, console });
   vm.runInContext(section('function resolveWeightPath', 'function defaultPaths'), context);
-  /* 用一个"指向测试目录"的假 defaultPaths 顶掉真的，免得依赖本机布局 */
   vm.runInContext('function defaultPaths(){ return { katago:"K", analyzeWeight:'
     + JSON.stringify(path.join(dir, 'b11c768nbt.bin.gz')) + ', playWeight:'
     + JSON.stringify(path.join(dir, 'b18c384nbt-humanv0.bin.gz'))
@@ -133,30 +130,83 @@ function fixtureNormalize(files) {
   return { context, dir };
 }
 
-test('★ 配置里存着失效路径时也要能回退（用户实际遇到的那种）', () => {
-  const { context, dir } = fixtureNormalize(['Bot.bin', 'Human.bin']);
-  context.cfg = {
-    analyzeWeight: path.join(dir, 'b11c768nbt.bin.gz'),   // 故意给一个不存在的旧路径
-    playWeight: path.join(dir, 'b18c384nbt-humanv0.bin.gz'),
-  };
-  const o = JSON.parse(vm.runInContext('JSON.stringify(normalizeConfig(cfg))', context));
-  assert.equal(path.basename(o.analyzeWeight), 'Bot.bin');
-  assert.equal(path.basename(o.playWeight), 'Human.bin');
-  assert.ok(fs.existsSync(o.analyzeWeight) && fs.existsSync(o.playWeight), '回退结果必须是真实存在的文件');
+/* ★★ 光修 defaultPaths 只能救"从没配过"的人。而报这个问题的用户**配过了** ——
+   他的 settings.json 里存着一条现在不存在的路径（挪过位置 / 手动选过旧文件）。
+
+   ★ 2026-10-08 修正：**失效回退在 `readConfig` 里做，不在 `normalizeConfig` 里。**
+     我一开始加在 normalizeConfig，结果"解析出来的路径"被 settings:save 写进了
+     settings.json（包里存成 `...\weights\Bot.bin`）—— 一旦文件夹挪走就变成失效的绝对路径，
+     反而破坏了"解压到哪都能用"的前提。
+     正确的分工：
+       · readConfig（读盘）  → 做失效回退（运行时决定"用哪条路径"）
+       · normalizeConfig    → **只做"填了没有"的规范化，不做解析**（存盘用）
+       · settings:save      → 与默认值相同的路径不写进配置（保持可移植） */
+function fixtureReadConfig(weightFiles, cfgJson) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rapace-read-'));
+  /* ⚠️ 目录结构必须跟**懒人包一致**：`<BASE_DIR>\KataGo\{engine,weights}`。
+     defaultPaths() 是按「引擎摆在软件目录旁边」这个约定算路径的 ——
+     我第一版建成了 `<BASE_DIR>\weights`（少一层 KataGo），于是它一个都找不到、
+     测试全红，而代码其实是对的。（踩过一次，记在这里。） */
+  const root = path.join(dir, 'KataGo');
+  fs.mkdirSync(path.join(root, 'engine'), { recursive: true });
+  fs.mkdirSync(path.join(root, 'weights'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'engine', 'katago.exe'), 'stub');
+  for (const n of weightFiles) fs.writeFileSync(path.join(root, 'weights', n), 'stub');
+  const cfgFile = path.join(dir, 'settings.json');
+  fs.writeFileSync(cfgFile, JSON.stringify(cfgJson || {}));
+  const context = vm.createContext({
+    fs, path, console, CFG_FILE: cfgFile, IS_PACKAGED: true, BASE_DIR: dir,
+    process: { env: {} }, __dirname: dir,
+    /* readConfig 依赖的两个模块级常量 —— 忘了它们会在沙箱里报 ReferenceError，
+       而 readConfig 有 try/catch，于是**静默地走 catch 分支返回默认值**，
+       表现成"回退没生效"（我在这上面绕了几圈，记一笔）。 */
+    RECENT_MAX: 8, RECORDS_DIR: path.join(dir, 'records'),
+  });
+  vm.runInContext(section('function resolveWeightPath', 'function defaultPaths'), context);
+  vm.runInContext(section('function defaultPaths()', '/* LoGos 服务的本地端口'), context);
+  vm.runInContext(section('function normRecent(v)', "/* 当前生效的路径"), context);
+  vm.runInContext(section('function readConfig()', 'const ENGINES ='), context);
+  return { context, dir, weightsDir: path.join(root, 'weights'), cfgFile };
+}
+
+test('★ 配置里存着失效路径 → readConfig 回退到自动识别到的权重', () => {
+  const f = fixtureReadConfig(['Bot.bin', 'Human.bin'], {
+    analyzeWeight: 'Z:\\不存在的目录\\b11c768nbt.bin.gz',   // 失效的旧路径
+    playWeight: 'Z:\\不存在的目录\\b18c384nbt-humanv0.bin.gz',
+  });
+  const o = JSON.parse(vm.runInContext('JSON.stringify(readConfig())', f.context));
+  assert.equal(path.basename(o.analyzeWeight), 'Bot.bin', '分析权重应回退到 Bot.bin');
+  assert.equal(path.basename(o.playWeight), 'Human.bin', '对弈权重应回退到 Human.bin');
+  assert.equal(o.fellBack, true, '回退了就该如实报告 fellBack');
 });
 
-test('配置为空时用默认值（不改老行为）', () => {
-  const { context, dir } = fixtureNormalize(['b11c768nbt.bin.gz', 'b18c384nbt-humanv0.bin.gz']);
+test('配置有效时 readConfig 原样保留（不能覆盖用户手动选的）', () => {
+  const f = fixtureReadConfig(['Bot.bin', 'MyOwn.bin'], {
+    analyzeWeight: path.join('__W__', 'MyOwn.bin'),
+    playWeight: path.join('__W__', 'MyOwn.bin'),
+  });
+  /* 目录建好之后才知道真实路径，这里补一次（占位符换成真实 weights 目录） */
+  fs.writeFileSync(f.cfgFile, JSON.stringify({
+    analyzeWeight: path.join(f.weightsDir, 'MyOwn.bin'),
+    playWeight: path.join(f.weightsDir, 'MyOwn.bin'),
+  }));
+  const o = JSON.parse(vm.runInContext('JSON.stringify(readConfig())', f.context));
+  assert.equal(path.basename(o.analyzeWeight), 'MyOwn.bin', '用户明确选的文件必须原样保留');
+  assert.equal(o.fellBack, false, '没回退就不该报 fellBack');
+});
+
+test('normalizeConfig 不做解析（存盘不能写进解析结果）', () => {
+  const { context } = fixtureNormalize(['Bot.bin', 'Human.bin']);
+  context.cfg = { analyzeWeight: 'Z:\\不存在\\old.bin.gz', playWeight: '' };
+  const o = JSON.parse(vm.runInContext('JSON.stringify(normalizeConfig(cfg))', context));
+  assert.equal(o.analyzeWeight, 'Z:\\不存在\\old.bin.gz', '用户填了什么就原样留着 —— 解析是运行时的事');
+});
+
+test('配置全空时用默认值', () => {
+  const { context } = fixtureNormalize(['b11c768nbt.bin.gz', 'b18c384nbt-humanv0.bin.gz']);
   const o = JSON.parse(vm.runInContext('JSON.stringify(normalizeConfig({}))', context));
   assert.match(o.analyzeWeight, /b11c768nbt\.bin\.gz$/);
   assert.match(o.playWeight, /b18c384nbt-humanv0\.bin\.gz$/);
-});
-
-test('配置有效时原样保留（绝不能把用户手动选的覆盖掉）', () => {
-  const { context, dir } = fixtureNormalize(['Bot.bin', 'Human.bin', 'MyOwn.bin']);
-  context.cfg = { analyzeWeight: path.join(dir, 'MyOwn.bin'), playWeight: path.join(dir, 'Human.bin') };
-  const o = JSON.parse(vm.runInContext('JSON.stringify(normalizeConfig(cfg))', context));
-  assert.equal(path.basename(o.analyzeWeight), 'MyOwn.bin', '用户明确选的文件不能被回退逻辑换掉');
 });
 
 

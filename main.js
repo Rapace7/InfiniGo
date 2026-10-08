@@ -1429,24 +1429,20 @@ function fileOk(p) {
 function normalizeConfig(c) {
   const d = defaultPaths();
   const pick = v => (typeof v === 'string' && v.trim()) ? v.trim() : null;
-  /* ★★ 配置里存着的权重路径**失效时也要能回退**（2026-10-08）。
-     为什么：光修 defaultPaths 只能救"从没配过"的人。而这位用户**配过了**
-     —— 他把懒人包挪了位置 / 手动选过旧文件，settings.json 里存着一条现在不存在的路径。
-     那种情况下老代码只会显示「★ 找不到」，用户完全不知道该选哪个。
-     现在：路径指着的文件不存在时，就在它**同一个目录**里找同类权重（.bin.gz / .bin 都认，
-     human 的归对弈）。找不到就原样返回 —— 行为与以前一致，不会更糟。 */
-  const weightOrFallback = (v, wantName, preferHuman) => {
-    const p = pick(v);
-    if (!p) return d[preferHuman ? 'playWeight' : 'analyzeWeight'];
-    try { if (fs.existsSync(p)) return p; } catch (e) { return p; }
-    const dir = path.dirname(p);
-    const fixed = resolveWeightPath(dir, wantName, preferHuman);
-    return fs.existsSync(fixed) ? fixed : p;
-  };
+  /* ★ 这里**故意不做"失效就回退"** —— 两件事分开：
+       · **读盘时**（`readConfig`）做失效回退：路径指的文件不在了就退回默认。
+         那是"用哪条路径"的问题，属于运行时。
+       · **存盘时**（`settings:save` → 本函数）只做"填了没有"的规范化，
+         原样保留用户填的字符串。
+     ⚠️ 2026-10-08 我在这个函数里加过失效回退，结果是**解析出来的路径被写进了
+        settings.json**（实测：包里存成了 `...\weights\Bot.bin` 这种自动识别结果）。
+        一旦用户再把文件夹挪走，那两条就变成失效的绝对路径 ——
+        恰好破坏了懒人包"解压到哪都能用"的前提。所以退回来：
+        **解析结果是运行时的，不进配置文件**（见 settings:save 里的保护）。 */
   return {
     katago:        pick(c && c.katago)        || d.katago,
-    analyzeWeight: weightOrFallback(c && c.analyzeWeight, 'b11c768nbt.bin.gz', false),
-    playWeight:    weightOrFallback(c && c.playWeight, 'b18c384nbt-humanv0.bin.gz', true),
+    analyzeWeight: pick(c && c.analyzeWeight) || d.analyzeWeight,
+    playWeight:    pick(c && c.playWeight)    || d.playWeight,
     coachServer:   pick(c && c.coachServer)   || d.coachServer,
     coachWeight:   pick(c && c.coachWeight)   || d.coachWeight,
     /* 棋谱库位置（2026-10-05 用户要求可改）。★ 允许为空串 ——
@@ -1705,13 +1701,34 @@ ipcMain.handle('settings:save', (_e, c) => {
   if (bad.length) {
     return { error: '这些文件找不到：' + bad.map(k => label[k]).join('、') + ' —— 重新选一下再保存' };
   }
-  /* 把这次的路径记进「最近用过」列表（详见 withRecent 的注释），
-     一起写进 settings.json —— 下次打开设置就能从下拉里挑。 */
+  /* ★★ 存盘保护（2026-10-08）：**与"默认值"相同的路径不写进配置文件。**
+     为什么需要：`readConfig` 会把失效的路径回退成默认，而默认现在是
+     「自动识别到的那个权重文件」（懒人包里的 `weights\Bot.bin`）。
+     如果把这个**解析结果**写进 settings.json，就留下了一条绝对的、和当前文件夹绑死的路径 ——
+     用户以后挪走文件夹 / 把包复制给别人，它立刻失效，
+     而我们明明有"解压到哪都能用"的设计。
+     判据很直白：**结果等于默认 → 就等于"没有自定义" → 不必存**。
+     存了的只可能是"用户确实指到了别处"（手选的文件不在默认位置），那才该持久化。 */
+  const d0 = defaultPaths();
+  const onDiskCfg = Object.assign({}, n);                        // ↓ 只用于写文件
+  const winPath = p => path.resolve(p).toLowerCase();             // Windows 路径大小写不敏感
+  const isDefault = k => {
+    try { return !!n[k] && !!d0[k] && winPath(n[k]) === winPath(d0[k]); } catch (e) { return false; }
+  };
+  for (const k of ['katago', 'analyzeWeight', 'playWeight', 'coachServer', 'coachWeight']) {
+    if (isDefault(k)) onDiskCfg[k] = '';   // 等于默认 → 不写（配置保持可移植）
+  }
   const oldRecordsDir = RECORDS_DIR;
-  const full = Object.assign({}, n, { recent: withRecent(PATHS.recent, n) });
-  const w = writeConfig(full);
+  /* ★ 「最近用过」的列表同样**排除等于默认值的那些** —— 那是自动识别出来的路径，
+     存进 settings.json 只会在文件夹挪走后变成一堆失效项，对用户毫无帮助。 */
+  const recentSrc = Object.assign({}, n);
+  for (const k of ['analyzeWeight', 'playWeight', 'coachWeight']) {
+    if (isDefault(k)) recentSrc[k] = '';
+  }
+  const rec = withRecent(PATHS.recent, recentSrc);
+  const w = writeConfig(Object.assign({}, onDiskCfg, { recent: rec }));
   if (w.error) return { error: '写入 settings.json 失败：' + w.error };
-  PATHS = full;
+  PATHS = Object.assign({}, n, { recent: rec });   // ★ 内存里保留**解析后**的路径（引擎要按它起）
   /* ★ 棋谱库位置变了 → 切过去，并把老位置的棋谱**复制**一份过去（老的不删）。 */
   refreshRecordsDir();
   const moved = migrateRecords(oldRecordsDir, RECORDS_DIR);
