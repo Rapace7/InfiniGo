@@ -870,8 +870,40 @@ main { flex: 1; display: flex; min-height: 0; }
 /* 帮助面板标题右侧的版本号（由 api.appVersion() 填） */
 .help-ver { font-size: 11.5px; font-weight: 400; color: var(--text-dim); margin-left: 6px; }
 
+/* ★ 这里**不要**写 `scroll-behavior: smooth`（2026-10-08 踩过）：
+   它会让**每一次** `scrollTop` 赋值都变成动画 —— 于是"先把滚动归零、
+   再量目标元素的绝对位置"这套算法会失效（赋值后立刻量，量到的还是动画中途的位置，
+   实测设了 0、量到 72）。平滑滚动改由 app.js 的 helpScrollTo 自己用 rAF 做，
+   该瞬时就瞬时、该平滑才平滑，两边不再互相打架。 */
 .help-body { flex: 1; min-height: 0; overflow-y: auto; padding-right: 8px; }
 .help-body p { font-size: 12.5px; line-height: 1.8; margin: 0 0 10px; }
+/* ---------- 帮助顶部的直达目录（2026-10-08 用户要求）----------
+   用户原话：「软件内的帮助要有顶部列出的直达按钮，直接拉到对应位置，方便快速查询」。
+   ★ 做成 **sticky（吸顶）**：往下翻到任何位置，这排按钮都还在头顶，
+     不用先滚回最上面才能跳去别的小节 —— 这是"便于查询"的关键。
+   ★ 背景必须不透明：`--panel` 是实色，能盖住从下面滚过去的正文。 */
+.help-nav {
+  position: sticky; top: 0; z-index: 2;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  margin: 0 0 12px; padding: 8px 0 10px;
+  background: var(--panel);
+  border-bottom: 1px solid #e6e4df;
+}
+.help-nav a {
+  font-size: 12px; text-decoration: none;
+  padding: 3px 10px; border-radius: 999px;
+  color: var(--accent); background: rgba(47, 111, 94, .08);
+  border: 1px solid rgba(47, 111, 94, .18);
+  cursor: pointer;
+}
+.help-nav a:hover { background: rgba(47, 111, 94, .16); }
+/* 当前所在的那一节（滚动时自动切 —— 见 app.js 里 helpHighlight） */
+.help-nav a.on {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+  font-weight: 600;
+}
+/* 跳到的小节标题要给吸顶目录让出位置，否则会被盖住半行 */
+.help-body h3 { scroll-margin-top: 44px; }
 .help-tip {
   padding: 9px 11px; margin-bottom: 14px;
   border-radius: 8px;

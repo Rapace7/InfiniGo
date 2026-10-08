@@ -542,9 +542,25 @@
         <b>对弈</b>用人类棋风模型（按你选的段位，像真人一样下）。
       </p>
 
+      <!-- ★ 顶部的直达目录（2026-10-08 用户要求）：
+           "要有顶部列出的直达按钮，直接拉到对应位置，方便快速查询"。
+           做成 sticky（吸顶）—— 这样往下翻到任何位置，这排按钮都还在头顶，
+           不用先滚回最上面才能跳去别的小节。
+           ★ 跳转用 JS 平滑滚动（见 app.js 里 help-nav 的绑定），
+             不靠 `#id` 锚点 —— 那会让地址栏跑出 `#help-kb` 这种尾巴，
+             而且在这个弹窗里不生效（滚动的是 .help-body 而不是根文档）。 -->
+      <nav class="help-nav" id="help-nav">
+        <a href="#help-first" data-help="help-first">第一次使用</a>
+        <a href="#help-parts" data-help="help-parts">界面分区</a>
+        <a href="#help-feat"  data-help="help-feat">主要功能</a>
+        <a href="#help-rules" data-help="help-rules">四种规则</a>
+        <a href="#help-keys"  data-help="help-keys">快捷键</a>
+        <a href="#help-data"  data-help="help-data">数据怎么看</a>
+      </nav>
+
       <!-- 第一次使用：放在最前面（2026-10-04 用户要求做「引导」，但**不要自动弹窗** ——
            做成随时能打开的一页；引擎没起来时棋盘中央还会给一条指路的提示）。 -->
-      <h3>第一次使用（3 步）</h3>
+      <h3 id="help-first">第一次使用（3 步）</h3>
       <ol class="help-steps">
         <li><b>把引擎配上</b> —— 点左上角「设置」，选 <b>katago.exe</b>（两个权重会自动填好），
           再点「保存并重启引擎」，等状态栏提示完成（几秒）。</li>
@@ -562,7 +578,7 @@
         （LoGos 是本地跑的小模型，偶尔会把术语说错 —— 位置通常对，叫法可能不准。）
       </p>
 
-      <h3>界面分区</h3>
+      <h3 id="help-parts">界面分区</h3>
       <table class="help-tb">
         <tr><td>左上角</td><td>棋谱库 · <b>设置</b>（换引擎/权重）· <b>帮助</b>（就是本页）</td></tr>
         <tr><td>顶栏</td><td>左侧：<b>KataGo / LoGos 引擎状态灯</b>（点开可加载 / 卸载）· 旁边那个<b>「刷新」</b>是急救键（见「主要功能 → 刷新引擎状态」）；右侧：新对局 · 模式（人机对弈 / 摆棋 · 双人）· 对手棋力</td></tr>
@@ -571,7 +587,7 @@
         <tr><td>底栏</td><td>回看（|◀ ◀ ▶ ▶| ＋ 滑块）· <b>显示 ▾</b>（推荐点 / 坐标 / 手数 / 变化图 / 音效 / 形势 都在这个菜单里）· 计算深度 · 拟人落子 · 试下 / 停一手 / 数子 / 认输 / 导出棋谱</td></tr>
       </table>
 
-      <h3>主要功能</h3>
+      <h3 id="help-feat">主要功能</h3>
       <ul class="help-list">
         <li><b>人机对弈</b><span>你一手、AI 一手。对手棋力在顶栏选 —— 是 KataGo 内置的<b>人类段位档</b>（20 级 ~ 9 段，是<b>非职业</b>的业余段位标尺）。另有两组可挑：<b>前AI时代段位</b>（2016 年 AlphaZero 之前的旧开局风格）、<b>职业棋风 · 按年份</b>（模仿职业棋手 / 强院生）。</span></li>
         <li><b>让子</b><span>让 N 子＝<b>黑方</b>开局先在角上摆 N 个黑子，摆完由<b>白方</b>先走（让的是白方，也就是强的那一方，黑是被让的一方）。<b>让子局不贴目</b> —— 选了让子，贴目会自动变成 0。</span></li>
@@ -597,7 +613,7 @@
         <li><b>这个软件不联网</b><span><b>除了「检查更新」按一下会问一次 GitHub，软件其他地方一律不出网</b>：KataGo 和 LoGos 都是本机跑的程序，软件跟 LoGos 说话走的是<b>本机回环</b>（127.0.0.1，数据不出你的电脑）。<b>检查更新只在你点的时候发一次请求</b>，不自动、不后台、不上报任何东西；连不上就明说连不上，不会假装"已是最新"。</span></li>
       </ul>
 
-      <h3>四种规则</h3>
+      <h3 id="help-rules">四种规则</h3>
       <table class="help-tb">
         <tr><td>中国（默认）</td><td>数子 · 贴 7.5 目</td></tr>
         <tr><td>日本</td><td>数目 · 贴 6.5 目</td></tr>
@@ -605,7 +621,7 @@
         <tr><td>明清</td><td>数子 + 还棋头 · 不贴目 · 四角座子、白先</td></tr>
       </table>
 
-      <h3>快捷键</h3>
+      <h3 id="help-keys">快捷键</h3>
       <table class="help-tb help-keys">
         <tr><td>悔棋</td><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td></tr>
         <tr><td>上一手 / 下一手</td><td><kbd>←</kbd> <kbd>→</kbd></td></tr>
@@ -619,7 +635,7 @@
         <tr><td>分析自检</td><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd><span class="dim">（状态栏打出分析链路的内部状态，排查「推荐点不出来」用）</span></td></tr>
       </table>
 
-      <h3>数据怎么看</h3>
+      <h3 id="help-data">数据怎么看</h3>
       <ul class="help-list">
         <li><b>黑方视角</b><span>所有胜率和目差都换算成「黑方」的（引擎原始是「轮到走棋那一方」的视角，若照原样画，每落一手曲线就要上下翻一次）。</span></li>
         <li><b>亏几目</b><span>＝相邻两手的目差之差。也就是「这一手比上一手差了多少」。</span></li>

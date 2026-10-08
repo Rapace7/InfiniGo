@@ -5328,9 +5328,140 @@ function checkEngineReloaded() {
    想改帮助文字 → 直接改 index.html；**改功能或快捷键时记得顺手同步**，
    别让帮助里写的和软件实际做的不一样。 */
 const HELP_MASK = $('help');
-$('btn-help').onclick = () => HELP_MASK.classList.add('open');
+$('btn-help').onclick = () => {
+  HELP_MASK.classList.add('open');
+  /* ★ 每次打开都从头看（2026-10-08）——
+     上次翻到一半的位置留着，会让人以为帮助"打开就是最后一节"。
+     ★ 滚动归零直接做（瞬时、不依赖任何测量）；各节位置等到**下一帧**
+       —— 弹窗出现动画走完、布局稳定了 —— 再量并缓存（见 measureHelpSections 的注释）。 */
+  const body = document.querySelector('.help-body');
+  if (body) body.scrollTop = 0;
+  helpHighlight('help-first');
+  requestAnimationFrame(() => { helpOffsets = measureHelpSections(); });
+};
 $('help-close').onclick = () => HELP_MASK.classList.remove('open');
 HELP_MASK.addEventListener('click', e => { if (e.target === HELP_MASK) HELP_MASK.classList.remove('open'); });
+
+/* ---------- 帮助顶部的直达目录（2026-10-08 用户要求）----------
+   用户原话：「软件内的帮助要有顶部列出的直达按钮，直接拉到对应位置，方便快速查询」。
+
+   ★ 为什么不用浏览器原生的 `#id` 锚点跳转：
+     帮助正文的滚动容器是 **`.help-body`**（它自己 `overflow-y:auto`），不是根文档 ——
+     `#id` 锚点在这里不生效。所以位置得自己算：
+       目标相对滚动容器的偏移 = 目标.rect.top − 容器.rect.top ＋ 容器已滚过的距离
+     再自己赋 `scrollTop`。CSS 里配了 `scroll-margin-top: 44px` 给吸顶目录让位，
+     所以这里不用再手动减目录高度。
+
+   ★ 顺带做**当前小节高亮**：目录吸在顶上，翻到哪一节一眼就知道自己在哪、
+     还剩哪些没看 —— 这才是"方便快速查询"。（用 rAF 节流，滚动不卡。） */
+const HELP_SECTIONS = ['help-first', 'help-parts', 'help-feat', 'help-rules', 'help-keys', 'help-data'];
+
+/* 平滑滚动：自己用 rAF 做，**不用 CSS 的 scroll-behavior:smooth**。
+   为什么不能用 CSS 那个（2026-10-08 实测踩到）：
+     它会让每一次 `scrollTop` 赋值都变成动画，于是"先归零、再量绝对位置"的算法失效 ——
+     赋值后立刻量，量到的还是动画中途的值（实测设了 0、读到 72），跳转位置就全错。
+   自己写还有个好处："打开帮助时归零"可以瞬时完成，而"点目录跳转"才用动画。 */
+function animateScrollTop(el, to, ms) {
+  const from = el.scrollTop;
+  const dist = to - from;
+  if (!dist) return;
+  /* 环境不支持 rAF（或无头调试窗口）→ 直接跳，别留个半路的位置 */
+  if (typeof requestAnimationFrame !== 'function') { el.scrollTop = to; return; }
+  const t0 = performance.now();
+  const dur = ms || 260;
+  const step = now => {
+    const p = Math.min(1, (now - t0) / dur);
+    const e = 1 - Math.pow(1 - p, 3);                 // easeOutCubic：快进慢出
+    el.scrollTop = from + dist * e;
+    if (p < 1) requestAnimationFrame(step);
+    else el.scrollTop = to;                           // 收尾对齐，免得差几像素
+  };
+  requestAnimationFrame(step);
+}
+
+/* 各小节相对"滚动内容顶部"的偏移量。
+   ★★ 为什么要缓存（2026-10-08 踩了两次才想通）：
+     · 弹窗关闭时是 `display:none` → 里面所有元素的 rect 全是 0；
+     · 弹窗刚打开时还在做出现动画 → 量出来会偏（实测"打开后跳第一节"停在 72px 而不是 0）。
+     两次都是同一个病：**在布局不稳定的时候量位置**。
+     所以改成：**只在弹窗稳定显示后量一次、存起来**（打开时的下一帧量），
+     之后所有跳转都用这份缓存 —— 不再依赖任何实时 rect。 */
+let helpOffsets = null;
+
+function measureHelpSections() {
+  const body = document.querySelector('.help-body');
+  if (!body) return null;
+  const keep = body.scrollTop;
+  body.scrollTop = 0;                                  // 量之前先归零，量完还原
+  const br = body.getBoundingClientRect();
+  const out = {};
+  for (const id of HELP_SECTIONS) {
+    const el = document.getElementById(id);
+    out[id] = el ? Math.round(el.getBoundingClientRect().top - br.top) : 0;
+  }
+  body.scrollTop = keep;
+  return out;
+}
+
+function helpScrollTo(id, smooth) {
+  const body = document.querySelector('.help-body');
+  if (!body) return;
+  if (!helpOffsets) helpOffsets = measureHelpSections();
+  if (!helpOffsets) return;
+  const top = Math.max(0, (helpOffsets[id] || 0) - 44);   // 44 = 吸顶目录让出的高度
+  if (smooth === false) body.scrollTop = top;
+  else animateScrollTop(body, top, 260);
+  helpHighlight(id);
+}
+
+function helpHighlight(id) {
+  const nav = $('help-nav');
+  if (!nav) return;
+  nav.querySelectorAll('a').forEach(a => a.classList.toggle('on', a.dataset.help === id));
+}
+
+/* 滚到哪一节就高亮哪个。
+   ★ 判据：**找最后一节「相对内容顶部的偏移 ≤ 当前滚动位置 + 一点余量」**。
+     第一版我写成"看谁已经越过容器顶部"（rect 相减），在**顶部**时那一节是"第一次使用"
+     和"主要功能"同时满足条件、取到后面那个 —— 所以滚到最上面反而高亮"主要功能"。
+     用绝对偏移量比就没这个歧义：滚到 0 时只有第一节满足。 */
+(() => {
+  const body = document.querySelector('.help-body');
+  const nav = $('help-nav');
+  if (!body || !nav) return;
+  let ticking = false;
+  const update = () => {
+    ticking = false;
+    const y = body.scrollTop + 60;
+    let cur = HELP_SECTIONS[0];
+    for (const id of HELP_SECTIONS) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      /* 同样用"先归零再量"会闪，所以这里用 offsetTop 一类的稳定量：
+         el 相对 .help-body 内容顶部的距离 = rect.top − body.rect.top + body.scrollTop */
+      const off = el.getBoundingClientRect().top - body.getBoundingClientRect().top + body.scrollTop;
+      if (off <= y) cur = id;
+    }
+    helpHighlight(cur);
+  };
+  body.addEventListener('scroll', () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(update);
+  });
+})();
+
+/* 点目录里的按钮 → 跳过去（阻止默认，免得地址栏跑出 `#help-xxx` 的尾巴） */
+(() => {
+  const nav = $('help-nav');
+  if (!nav) return;
+  nav.querySelectorAll('a').forEach(a => {
+    a.addEventListener('click', e => {
+      e.preventDefault();
+      helpScrollTo(a.dataset.help || (a.getAttribute('href') || '').replace('#', ''), true);
+    });
+  });
+})();
 
 /* ---------------- 启动 ---------------- */
 
