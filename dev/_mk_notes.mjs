@@ -18,16 +18,35 @@ if (i < 0) { console.error('★ 找不到通用部分的起点：' + marker); pr
 
 const ver = t.slice(0, i);
 const gen = t.slice(i);
-fs.writeFileSync(OUT, ver + gen, 'utf8');
 
-console.log('版本专属段 ' + ver.length + ' 字符');
-console.log('通用部分   ' + gen.length + ' 字符');
-console.log('合计       ' + (ver.length + gen.length) + ' 字符 → ' + OUT);
-console.log('--- 版本段首行 ---');
-console.log(ver.split('\n')[0]);
-console.log('--- 拼接处（版本段末 3 行 + 通用段首 2 行）---');
-const tail = ver.trimEnd().split('\n').slice(-3);
-const head = gen.split('\n').slice(0, 2);
-for (const l of tail) console.log('  │ ' + l);
-console.log('  ├─ 接 ─');
-for (const l of head) console.log('  │ ' + l);
+/* ★★ 2026-10-08 用户要求：**Release 说明必须"下载优先"**。
+   原来正文一上来就是几千字的分版本说明，用户要往下拉很久才看到下载文件 ——
+   而 GitHub 的 Release 页面里**文件清单（Assets）在页面最下面**，
+   说明越长，越难找到下载（用户原话：「需要往下拉很多才能看到 assets 的下载」）。
+
+   现在拼成这个结构：
+     ① 首屏只有**一行话 + 一个直达 Assets 的锚点链接**（点一下滚到下载处）
+     ② 所有正文折进 <details>，默认收起 —— 想看细节的人自己展开
+   这样"从进页面到能点下载"永远只有一行 + 一次点击。 */
+const firstLine = (ver.split('\n')[0] || '').replace(/^v?[\d.]+\s*[：:]\s*/, '').trim();
+
+const HEAD = [
+  '## 📥 [点这里下载 RapaceGo.zip](#assets)',
+  '',
+  '> ' + (firstLine || '本次更新说明见下。'),
+  '> 下载文件在页面**最下面**的 `Assets` 那块 —— 点上面那个链接会直接滚过去。',
+  '',
+  '<details>',
+  '<summary><b>展开看这一版改了什么</b></summary>',
+  '',
+].join('\n');
+
+const FOOT = '\n</details>\n';
+
+fs.writeFileSync(OUT, HEAD + ver + '\n' + gen + FOOT, 'utf8');
+
+console.log('说明段 ' + ver.length + ' 字符（已折进 <details>）');
+console.log('通用部分 ' + gen.length + ' 字符（也已折起）');
+console.log('合计 ' + (HEAD.length + ver.length + gen.length + FOOT.length) + ' 字符 → ' + OUT);
+console.log('--- 首屏（用户第一眼看到的）---');
+console.log(HEAD);
