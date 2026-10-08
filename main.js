@@ -82,6 +82,28 @@ const LOG_DIR = path.join(BASE_DIR, 'engine-logs');
    它和 KataGo 长得不像：KataGo 是「stdin 喂 JSON / stdout 出 JSON」的长驻进程，
    而 LoGos 由 llama-server 托管，**走 HTTP**（进程只管活着，请求从 localhost 端口进）。
    所以引擎管理里给它们分了 kind：'katago' / 'llama'。 */
+/* 一份权重文件的最终路径：优先用「期望的文件名」，不存在就**在同一个 weights 目录里找同类**。
+   ★★ 为什么必须有这个回退（2026-10-08 用户报的问题）：
+     默认路径原来把文件名**写死**成 `b11c768nbt.bin.gz` / `b18c384nbt-humanv0.bin.gz`。
+     可是懒人包（发给别人下载的那份）里放的是**解压后又改过名**的裸权重 —— `Bot.bin` / `Human.bin`
+     （因为**夸克网盘不允许分享压缩包格式**，只能解压成 .bin 再传）。
+     名字对不上 → 双击懒人包后两个权重路径全指空 → 引擎起不来，
+     而用户去设置里手动选时，文件选择框的过滤器又只认 .gz（已另修）→ **开箱不能用**。
+   回退顺序（都在同一个 weights 目录里找，不跨目录乱猜）：
+     ① 期望的文件名（原样，保持原有行为）
+     ② 同目录里任意 `*.bin.gz` / `*.bin`；带 human/人类 字样的优先给对弈、其余给分析 */
+function resolveWeightPath(weightsDir, wantName, preferHuman) {
+  const want = path.join(weightsDir, wantName);
+  try { if (fs.existsSync(want)) return want; } catch (e) { /* 下面继续找 */ }
+  let names = [];
+  try { names = fs.readdirSync(weightsDir); } catch (e) { return want; }   // 目录都没有 → 原样返回（保持旧行为）
+  const cands = names.filter(n => /\.bin(\.gz)?$/i.test(n));
+  if (!cands.length) return want;
+  const isHuman = n => /human|人类/i.test(n);
+  const pick = cands.find(n => preferHuman ? isHuman(n) : !isHuman(n));
+  return path.join(weightsDir, pick || cands[0]);
+}
+
 function defaultPaths() {
   /* 默认约定：引擎就放在**软件目录的上一级**（和 RapaceGo 并列）——
      这样别人 clone 下来，按 README 把 KataGo / LoGos 摆在旁边就能直接用，
@@ -92,10 +114,12 @@ function defaultPaths() {
   const up = IS_PACKAGED ? BASE_DIR : path.join(__dirname, '..');
   const root  = process.env.RAPACEGO_KATAGO || path.join(up, 'KataGo');
   const logos = process.env.RAPACEGO_LOGOS  || path.join(up, 'LoGos');
+  /* 权重走 resolveWeightPath：找不到写死的那两个名字时，自动认同目录里的 .bin / 改名过的权重 */
+  const wdir = path.join(root, 'weights');
   return {
     katago:        path.join(root, 'engine', 'katago.exe'),
-    analyzeWeight: path.join(root, 'weights', 'b11c768nbt.bin.gz'),
-    playWeight:    path.join(root, 'weights', 'b18c384nbt-humanv0.bin.gz'),
+    analyzeWeight: resolveWeightPath(wdir, 'b11c768nbt.bin.gz', false),
+    playWeight:    resolveWeightPath(wdir, 'b18c384nbt-humanv0.bin.gz', true),
     coachServer:   path.join(logos, 'llama-server.exe'),
     coachWeight:   path.join(logos, 'LoGos-7B-Q4_K_M.gguf'),
   };
@@ -886,7 +910,8 @@ function weightVersionComplain(line) {
     return '权重文件太旧：这个引擎已不再支持它。请换一份较新的权重（或把引擎降到与它同时代）。';
   }
   if (/invalid version, you probably specified the wrong file/i.test(s)) {
-    return '这个文件不是有效的 KataGo 权重（可能选错了文件）。请选 .bin.gz 结尾的权重。';
+    return '这个文件不是有效的 KataGo 权重（可能选错了文件）。'
+      + '权重应该是 .bin.gz 或 .bin 结尾（两者都行）。';
   }
   return '';
 }
@@ -1404,10 +1429,24 @@ function fileOk(p) {
 function normalizeConfig(c) {
   const d = defaultPaths();
   const pick = v => (typeof v === 'string' && v.trim()) ? v.trim() : null;
+  /* ★★ 配置里存着的权重路径**失效时也要能回退**（2026-10-08）。
+     为什么：光修 defaultPaths 只能救"从没配过"的人。而这位用户**配过了**
+     —— 他把懒人包挪了位置 / 手动选过旧文件，settings.json 里存着一条现在不存在的路径。
+     那种情况下老代码只会显示「★ 找不到」，用户完全不知道该选哪个。
+     现在：路径指着的文件不存在时，就在它**同一个目录**里找同类权重（.bin.gz / .bin 都认，
+     human 的归对弈）。找不到就原样返回 —— 行为与以前一致，不会更糟。 */
+  const weightOrFallback = (v, wantName, preferHuman) => {
+    const p = pick(v);
+    if (!p) return d[preferHuman ? 'playWeight' : 'analyzeWeight'];
+    try { if (fs.existsSync(p)) return p; } catch (e) { return p; }
+    const dir = path.dirname(p);
+    const fixed = resolveWeightPath(dir, wantName, preferHuman);
+    return fs.existsSync(fixed) ? fixed : p;
+  };
   return {
     katago:        pick(c && c.katago)        || d.katago,
-    analyzeWeight: pick(c && c.analyzeWeight) || d.analyzeWeight,
-    playWeight:    pick(c && c.playWeight)    || d.playWeight,
+    analyzeWeight: weightOrFallback(c && c.analyzeWeight, 'b11c768nbt.bin.gz', false),
+    playWeight:    weightOrFallback(c && c.playWeight, 'b18c384nbt-humanv0.bin.gz', true),
     coachServer:   pick(c && c.coachServer)   || d.coachServer,
     coachWeight:   pick(c && c.coachWeight)   || d.coachWeight,
     /* 棋谱库位置（2026-10-05 用户要求可改）。★ 允许为空串 ——
@@ -1452,6 +1491,14 @@ function guessCoach(exePath) {
      <root>/engine/katago.exe  +  <root>/weights/*.bin.gz
    所以看「exe 所在目录」「它的上一级」以及这两处下面的 weights/。
    找到的一堆 .bin.gz 里：文件名带 human 的 = 对弈权重，其余 = 分析权重。 */
+/* 从目录里挑出 KataGo 权重文件。
+   ★★ 两种后缀都要认（2026-10-08 用户报的问题）：
+        .bin.gz —— 官方发布的形式（gzip 压缩）
+        .bin    —— **解压后的裸权重**，KataGo 自己完全支持（实测能正常加载并分析）
+      为什么必须认 .bin：**夸克网盘不允许分享压缩包格式**，用户只能把 .bin.gz 解压成 .bin
+      再上传，别人下到的就是裸 .bin。原来这里只匹配 `\.bin\.gz$`，于是自动扫描一个都找不到，
+      连文件选择框的过滤器也只写了 gz —— 用户"手里明明有权重却选不中"。 */
+const WEIGHT_RE = /\.bin(\.gz)?$/i;
 function guessWeights(exePath) {
   const dir = path.dirname(exePath);
   const roots = [dir, path.dirname(dir)];
@@ -1461,7 +1508,7 @@ function guessWeights(exePath) {
   for (const d of dirs) {
     let names = [];
     try { names = fs.readdirSync(d); } catch (e) { continue; }
-    for (const n of names) if (/\.bin\.gz$/i.test(n)) found.push(path.join(d, n));
+    for (const n of names) if (WEIGHT_RE.test(n)) found.push(path.join(d, n));
   }
   const uniq = [...new Set(found)];
   if (!uniq.length) return null;
@@ -1590,16 +1637,19 @@ ipcMain.handle('settings:choose', async (_e, kind) => {
   const title = isDir ? '选择棋谱库文件夹（棋谱、复盘报告、讲解都会放这儿）'
     : isGguf ? '选择 LoGos 讲解权重（.gguf）'
       : kind === 'coachServer' ? '选择 llama-server.exe'
-        : isExe ? '选择 katago.exe' : '选择权重文件（.bin.gz）';
+        : isExe ? '选择 katago.exe' : '选择 KataGo 权重（.bin.gz 或 .bin）';
   const opt = {
     title,
     defaultPath: isDir ? (cur[kind] || RECORDS_DIR) : path.dirname(cur[kind] || ''),
     properties: [isDir ? 'openDirectory' : 'openFile'],
   };
   if (!isDir) {
+    /* ★ 过滤器两种后缀都要给（见 WEIGHT_RE 上方的说明）——
+       只写 'gz' 的话，用户把 .bin.gz 解压成 .bin 之后，在对话框里**根本看不到那个文件**。 */
     opt.filters = isExe ? [{ name: '可执行文件', extensions: ['exe'] }]
       : isGguf ? [{ name: 'LoGos 权重', extensions: ['gguf'] }]
-        : [{ name: 'KataGo 权重', extensions: ['gz'] }];
+        : [{ name: 'KataGo 权重', extensions: ['gz', 'bin'] },
+           { name: '全部文件', extensions: ['*'] }];
   }
   const r = await dialog.showOpenDialog(win, opt);
   if (!r || r.canceled || !r.filePaths || !r.filePaths.length) return { canceled: true };

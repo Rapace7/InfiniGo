@@ -186,6 +186,14 @@ RapaceGo/
    └─ LoGos-7B-Q4_K_M.gguf
 ```
 
+> ### `.bin.gz` or plain `.bin`? **Both work.**
+> `katagotraining.org` hands out gzipped weights (`.bin.gz`) — use them as-is, no unpacking.
+> But some file hosts (Quark, for one) **refuse to share archives**, so people unzip the
+> `.bin.gz` into a plain `.bin` before uploading. The app accepts **both** (tested: KataGo
+> loads a plain `.bin` fine — it is just bigger, ~270 MB vs ~200 MB).
+> If your downloaded weight doesn't show up in the file picker, its extension was probably
+> mangled on the way — switch the dialog to "All files".
+
 > **Already grabbed `LoGos-7B-Q4_K_M.gguf.part01 / .part02 / .part03` yourself?**
 > Then the .bat is unnecessary — see the **▶ Click to expand** section just below,
 > it merges them with one command.
@@ -375,6 +383,12 @@ and cross-game race regression. They run in seconds after every change.
 ## FAQ
 
 **"Engine not found"?** Open Settings and fix the paths (see the table above).
+
+**"I can't see my downloaded weights in the file picker"?**
+The app accepts **`.bin.gz` and `.bin`**. Some hosts (Quark) won't share archives, so people
+unzip the weight into a plain `.bin` first — that works too, no need to re-zip it.
+If the extension got mangled along the way (browser added `.zip`, or a `(1)` suffix),
+switch the dialog's file type to "All files".
 
 **"Commentary model not loaded"?** Click the `LoGos` indicator in the top bar → Load.
 Not loading it by default is intentional (saves VRAM).
