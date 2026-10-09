@@ -29,6 +29,19 @@ os.environ.setdefault('PYTHONIOENCODING', 'utf-8')
 DEV = os.path.dirname(os.path.abspath(__file__))
 APP = os.path.dirname(DEV)
 EXE = os.path.join(APP, 'node_modules', 'electron', 'dist', 'electron.exe')
+
+# ★ 2026-10-09 补：允许用环境变量指定**打包好的 exe**（测"用户真实拿到的包"时必须用这个）。
+#   为什么需要：开发态跑的是 `electron.exe <仓库目录>`，而用户双击的是 RapaceGo.exe，
+#   两者的引擎定位逻辑不同（打包版按 exe 所在目录找引擎，开发态按仓库上一级）——
+#   只测开发态等于没测到用户实际路径。
+#   用法：$env:RAPACEGO_EXE = 'D:\...\RapaceGo.exe'
+EXE_OVERRIDE = os.environ.get('RAPACEGO_EXE') or ''
+if EXE_OVERRIDE and os.path.exists(EXE_OVERRIDE):
+    EXE = EXE_OVERRIDE
+    # 打包版不需要（也不能）传"应用目录"参数 —— 它自己就是应用
+    PACKAGED_ARG = []
+else:
+    PACKAGED_ARG = [APP]
 # node 路径：先看 PATH，再退回本机常用位置 —— 原来写死了一个绝对路径，
 # 换机器/升版本就废（而测试脚本本身不该和某台机器绑死）。
 NODE = shutil.which('node') or next(
@@ -186,7 +199,7 @@ if not os.environ.get('RAPACEGO_RECORDS'):
     print('测试棋谱库: %s（真棋谱不受影响）' % _test_records, flush=True)
 os.makedirs(G + '_trash', exist_ok=True)          # 运行日志也丢进 _trash，根目录保持干净
 lf = open(G + '_trash/_run.log', 'w', encoding='utf-8')
-proc = subprocess.Popen([EXE, '--remote-debugging-port=9333', APP], env=env,
+proc = subprocess.Popen([EXE, '--remote-debugging-port=9333'] + PACKAGED_ARG, env=env,
                         stdout=lf, stderr=subprocess.STDOUT)
 print('已启动 pid=%d（此前已有 electron: %s）' % (proc.pid, sorted(before)), flush=True)
 time.sleep(11)

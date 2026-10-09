@@ -261,6 +261,12 @@ it still works; delete it and nothing is left behind.
 
 Drop the two engine folders next to `RapaceGo.exe` and you're done.
 
+> ✅ **Unzipping into a nested folder (e.g. `D:\Games\RapaceGo\RapaceGo\`) is fine.**
+> The app looks for `KataGo/` and `LoGos/` in **the folder the .exe itself lives in**,
+> so the path and the nesting depth do not matter — verified against the packaged build
+> on 2026-10-09. The only requirement is that `KataGo/` sits in the **same folder**
+> as `RapaceGo.exe`.
+
 ### Option 2: run from source (to change the code)
 
 ```
