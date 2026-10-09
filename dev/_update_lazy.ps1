@@ -38,6 +38,23 @@ Get-ChildItem -LiteralPath $SRC -Force | ForEach-Object {
 }
 Write-Host ("  复制了 $copied 项")
 
+# ★★ 使用说明（2026-10-08 加）
+#    为什么不跟着 $SRC 一起拷：它是**发给用户的文档**，源头应该跟着仓库走
+#    （在 RapaceGo\ 根目录），而不是塞进打包产物里 —— 不然一 regenerate 就丢。
+#    曾短暂放过一个"环境自检器"，后来撤了：软件内的「引擎兼容性自检」已经能查
+#    两套引擎并自动挑对，独立脚本是多余的（首相 2026-10-08 决定）。
+$readmeSrc = 'D:\GoStudy\RapaceGo\懒人包使用说明.txt'
+if (Test-Path $readmeSrc) {
+    Copy-Item -LiteralPath $readmeSrc -Destination (Join-Path $DEST '使用说明.txt') -Force
+    Write-Host '  ✓ 使用说明.txt 已更新'
+}
+# 顺手清掉旧包里的自检器残留（撤掉的功能）
+$oldTools = Join-Path $DEST 'tools'
+if (Test-Path $oldTools) {
+    Remove-Item $oldTools -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Host '  ✓ 清掉了旧的自检器残留（tools\）' -ForegroundColor DarkGray
+}
+
 Write-Host '=== 2/4 核对懒人包里绝不能出现的东西 ==='
 # ⚠️ 2026-10-07：这些**不是**"源目录被污染"才会出现 —— 只要用懒人包里的 exe 启动过一次，
 #   它就会在包内自己生成 records\ 和 userdata\（还可能有个 engine-logs\）。

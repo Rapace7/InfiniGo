@@ -105,10 +105,115 @@ function resolveWeightPath(weightsDir, wantName, preferHuman) {
   return path.join(weightsDir, pick || cands[0]);
 }
 
+/* ★★ 引擎装多套时，挑"能用的那一套"（2026-10-08 加）。
+   背景：懒人包里**同时装了两套引擎**（N 卡版 + 通用版），用户跑一次
+   「本机运行环境自检」就会把用不到的那套删掉。但**用户可能不跑就直接开软件**，
+   所以这里也要能自己认出该用哪一套 —— 不能等到用户发现"引擎起不来"才说。
+
+   目录名约定（root 就是 `KataGo\`）：
+     · `engine\`                 ← 标准位置（自检器挑完会把留下的那套改名到这里）
+     · `engine-nvidia\`          ← N 卡版（CUDA）
+     · `engine-generic\`         ← 通用版（OpenCL，A 卡/Intel 都能用）
+   顺序：先认本机显卡匹配的那套，再退回标准位置。**认不出显卡时优先标准位置**，
+   因为那是"自检器已经挑过"的状态。 */
+function pickKataGoEngineDir(root) {
+  const std  = path.join(root, 'engine');
+  const nv   = path.join(root, 'engine-nvidia');
+  const gen  = path.join(root, 'engine-generic');
+  const has = p => { try { return fs.existsSync(path.join(p, 'katago.exe')); } catch (e) { return false; } };
+  let gpuBrand = '';
+  try { gpuBrand = (detectGpuBrandSync() || '').toLowerCase(); } catch (e) { gpuBrand = ''; }
+  if (gpuBrand === 'nvidia' && has(nv)) return nv;
+  if (gpuBrand && gpuBrand !== 'nvidia' && has(gen)) return gen;
+  if (has(std)) return std;
+  if (has(nv)) return nv;
+  if (has(gen)) return gen;
+  return std;                                  // 都不在 → 返回标准位置（报错信息才自然）
+}
+
+/* LoGos 同理。它的目录里除了运行时还有那份 4.5 GB 的模型，
+   所以每套运行时各有自己的文件夹，模型和权重在两边都有一份。
+   目录名约定（root 就是 `LoGos\`）：
+     · 标准位置     = root 本身（`llama-server.exe` 直接在这儿）
+     · `runtime-nvidia\`  ← N 卡版
+     · `runtime-generic\` ← 通用版（Vulkan） */
+function pickLoGosDir(root) {
+  const std = root;
+  const nv  = path.join(root, 'runtime-nvidia');
+  const gen = path.join(root, 'runtime-generic');
+  const has = p => { try { return fs.existsSync(path.join(p, 'llama-server.exe')); } catch (e) { return false; } };
+  let gpuBrand = '';
+  try { gpuBrand = (detectGpuBrandSync() || '').toLowerCase(); } catch (e) { gpuBrand = ''; }
+  if (gpuBrand === 'nvidia' && has(nv)) return nv;
+  if (gpuBrand && gpuBrand !== 'nvidia' && has(gen)) return gen;
+  if (has(std)) return std;
+  if (has(nv)) return nv;
+  if (has(gen)) return gen;
+  return std;
+}
+
+/* ★ 显卡品牌探测：**同步**版（给 defaultPaths 用）。
+   为什么不能直接用 gpuInfo()：那个是 async（`app.getGPUInfo`），
+   而 defaultPaths() 在模块加载时就同步跑完了 —— 早期 readConfig 就那么设计的。
+   ★ 为什么用 execFileSync 而不是把 gpuInfo 改成同步：
+     只有"两套引擎都在"时才需要判断该用哪套（自检器跑过之后只剩一套，
+     根本不走这里），所以这次探测基本不会发生；真发生时花 ~200ms 也值。
+   ★ 非 Windows 直接返回空 → 上层走"标准位置优先"（不猜）。 */
+function detectGpuBrandSync() {
+  if (process.platform !== 'win32') return '';
+  if (gpuBrandCache !== undefined) return gpuBrandCache;
+  gpuBrandCache = '';
+  try {
+    /* 不写死 powershell 的绝对路径 —— 用系统 PATH 里的（Windows 自带）。 */
+    const out = execFileSync('powershell',
+      ['-NoProfile', '-NonInteractive', '-Command',
+        'Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name'],
+      { encoding: 'utf8', timeout: 6000, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
+    const s = String(out || '');
+    /* 顺序要紧：笔记本常见「Intel 核显 + NVIDIA 独显」两块都在名单里，
+       这时**必须认成 NVIDIA**（引擎是给独显用的），所以先判 N 卡。
+       与 tools\检查环境.ps1 里的判定保持同一套关键词。 */
+    if (/nvidia|geforce|\brtx\b|\bgtx\b|quadro|tesla/i.test(s)) gpuBrandCache = 'nvidia';
+    else if (/\bamd\b|radeon|\bati\b/i.test(s))                     gpuBrandCache = 'amd';
+    else if (/\bintel\b|uhd graphics|iris|\barc\b/i.test(s))        gpuBrandCache = 'intel';
+  } catch (e) { /* 查不到就当"不知道"，上层走标准位置 */ }
+  return gpuBrandCache;
+}
+
+/* KataGo 的权重目录：跟着引擎目录走。
+   ★ 为什么要这样：两套引擎并存时，权重（b11/b18 那两份）是**所有显卡通用**的，
+     只放在标准位置 `KataGo\weights\` 一份。选了 engine-nvidia 也得去那儿找权重。
+   顺序：引擎目录下的 weights\ 优先（自检器挑完可能把整套挪过去），
+        否则用 `KataGo\weights\`（两套共用一份，这是常态）。 */
+function resolveWeightDir(root) {
+  const shared = path.join(root, 'weights');
+  try { if (fs.existsSync(shared)) return shared; } catch (e) { /* 下面再看 */ }
+  const eng = pickKataGoEngineDir(root);
+  const local = path.join(eng, '..', 'weights');
+  try { if (fs.existsSync(local)) return local; } catch (e) { /* 用共用的 */ }
+  return shared;
+}
+
+/* 单个文件版：优先用目录里"期望的文件名"，没有就在同目录里找同类
+   （LoGos 的 .gguf 只有一个，所以比 resolveWeightPath 简单） */
+function resolveWeightPath2(dir, want) {
+  const p = path.join(dir, want);
+  try { if (fs.existsSync(p)) return p; } catch (e) { /* 继续找 */ }
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch (e) { return p; }
+  const hit = names.find(n => /\.gguf$/i.test(n));
+  return hit ? path.join(dir, hit) : p;
+}
+
+/* 显卡品牌的进程内缓存（undefined = 还没查过；'' = 查过但没查到） */
+let gpuBrandCache;
+
 function defaultPaths() {
-  /* 默认约定：引擎就放在**软件目录的上一级**（和 RapaceGo 并列）——
-     这样别人 clone 下来，按 README 把 KataGo / LoGos 摆在旁边就能直接用，
-     不用先配路径。想放别处有两个办法（优先级从高到低）：
+  /* ★ 已经**改正**的过时说明（2026-10-08）：原文写"引擎放在软件目录上一级"，
+     那是**开发态**（`up = path.join(__dirname,'..')`）的行为。
+     **打包版用的是软件目录本身**（`up = BASE_DIR`，即 exe 所在目录）——
+     也就是"KataGo\ 和 RapaceGo.exe 平级"。懒人包就是按这个放的。
+     想放别处有两个办法（优先级从高到低）：
        ① 设置面板里改 → 存进 settings.json，下次打开就用你的；
        ② 环境变量 RAPACEGO_KATAGO / RAPACEGO_LOGOS。
      ★ 这里**不写死盘符** —— 那是本机耦合，换台电脑 / 换个盘就全废。 */
@@ -116,13 +221,15 @@ function defaultPaths() {
   const root  = process.env.RAPACEGO_KATAGO || path.join(up, 'KataGo');
   const logos = process.env.RAPACEGO_LOGOS  || path.join(up, 'LoGos');
   /* 权重走 resolveWeightPath：找不到写死的那两个名字时，自动认同目录里的 .bin / 改名过的权重 */
-  const wdir = path.join(root, 'weights');
+  const wdir = resolveWeightDir(root);
+  const eng  = pickKataGoEngineDir(root);
+  const ldir = pickLoGosDir(logos);
   return {
-    katago:        path.join(root, 'engine', 'katago.exe'),
+    katago:        path.join(eng, 'katago.exe'),
     analyzeWeight: resolveWeightPath(wdir, 'b11c768nbt.bin.gz', false),
     playWeight:    resolveWeightPath(wdir, 'b18c384nbt-humanv0.bin.gz', true),
-    coachServer:   path.join(logos, 'llama-server.exe'),
-    coachWeight:   path.join(logos, 'LoGos-7B-Q4_K_M.gguf'),
+    coachServer:   path.join(ldir, 'llama-server.exe'),
+    coachWeight:   resolveWeightPath2(ldir, 'LoGos-7B-Q4_K_M.gguf'),
   };
 }
 
@@ -234,9 +341,91 @@ function weightOf(key) {
   return PATHS.coachWeight;                 // coach（LoGos）
 }
 
-/* 某个引擎该用哪个可执行文件 */
+/* ==================== ★★ 自动选对引擎（2026-10-08）====================
+   为什么要有它（首相的要求原话：「以无代码技术基础为主要用户导向，
+   不要给用户出很多难题让用户自己干，很多用户甚至移动文件都是个麻烦」）：
+
+   懒人包里同时装了两套引擎（N 卡版 CUDA + 通用版 OpenCL/Vulkan）。
+   用户**什么都不该做**。所以：
+     · 配好的路径指向哪套、就用哪套（自检器跑过之后是唯一的正确结果）
+     · **配好的那套和本机显卡不匹配 → 自动换成另一套**，并在界面上说清楚"我帮你换好了"
+     · 两套都对不上（显卡太老/驱动缺失）→ 说人话告诉用户怎么办
+
+   目录名约定（`KataGo\` 下面 / `LoGos\` 下面）：
+     engine-nvidia / runtime-nvidia   ← N 卡版
+     engine-generic / runtime-generic ← 通用版（A 卡、Intel 都能用）
+   自检器会把用不到的那套**删掉**，所以跑过之后这个逻辑根本不会触发（零开销）。 */
+const ENGINE_DIR_NAMES = { katago: ['engine', 'engine-nvidia', 'engine-generic'],
+                           llama:  ['', 'runtime-nvidia', 'runtime-generic'] };
+
+/* 某个引擎目录是给哪种显卡的？
+   · KataGo：读引擎自带的 `lizzieyzy-next-engine-backend.txt`（就一个词：nvidia / 空=通用）
+   · LoGos：没有标识文件 → 看目录里有没有 `ggml-cuda.dll`（CUDA 专有文件名）
+   返回 'nvidia' / ''（通用/未知）。**只在"两套并存"时才会被调用。** */
+function backendBrandOfDir(kind, dir) {
+  try {
+    if (kind === 'katago') {
+      const f = path.join(dir, 'lizzieyzy-next-engine-backend.txt');
+      if (!fs.existsSync(f)) return '';
+      const t = String(fs.readFileSync(f, 'utf8') || '').trim().toLowerCase();
+      return t.includes('nvidia') ? 'nvidia' : '';
+    }
+    /* llama：ggml-cuda.dll 存在 = N 卡版；只有 ggml-vulkan.dll = 通用版 */
+    const names = fs.readdirSync(dir);
+    if (names.some(n => /^ggml-cuda\.dll$/i.test(n)))  return 'nvidia';
+    return '';
+  } catch (e) { return ''; }                   // 读不到 → 当"不知道"，不换
+}
+
+/* 要不要换引擎？返回"换过去该用的可执行文件路径"，不需要换就返回 null。
+   ★ 三条防线，避免误换：
+     ① 本机显卡品牌**认不出来** → 不换（宁可不动）
+     ② 配好的那份品牌**认不出来** → 不换
+     ③ 两者其实匹配 → 不换
+   只有"明确不匹配 + 另一套确实存在"才换。 */
+function pickWorkingEngine(kind, want) {
+  try {
+    if (!want || !fs.existsSync(want)) return null;                 // 文件都没了：走原有报错路径
+    const gpu = (detectGpuBrandSync() || '').toLowerCase();
+    if (!gpu) return null;                                          // ① 认不出显卡 → 不动
+    /* 正在用的那套在哪个目录？
+       · KataGo：want = `...\engine\katago.exe`  → 目录 = 它的上一级
+       · LoGos ：want = `...\llama-server.exe`   → 目录 = 它的上一级 */
+    const have = path.dirname(want);
+    const haveBrand = backendBrandOfDir(kind, have);
+    if (!haveBrand && kind === 'katago') return null;               // ② 认不出这套 → 不动
+    const wantNv = (haveBrand === 'nvidia');
+    const needNv = (gpu === 'nvidia');
+    if (wantNv === needNv) return null;                             // ③ 匹配 → 不换
+    /* 换：在**同一个父目录**下找另一套。
+       ★★ 这里踩过一次（2026-10-08）：原来 base 写的是 `path.dirname(have)`，
+          而 have 已经是引擎目录本身了 → base 跑到程序的上一级去了
+          （`KataGo\` 的上一级是程序根目录），于是**永远找不到另一套**、静默不换。
+          正确做法：父目录是 `path.dirname(path.dirname(want))`，
+          或直接用 have 的上一层 —— 这里用 want 反推，最不容易搞错：
+            KataGo want = `<root>\KataGo\engine\katago.exe`   → 父 = `<root>\KataGo`
+            LoGos  want = `<root>\LoGos\llama-server.exe`     → 父 = `<root>\LoGos` */
+    const base = kind === 'katago' ? path.dirname(have) : have;
+    const names = ENGINE_DIR_NAMES[kind];
+    for (const nm of names) {
+      const cand = nm ? path.join(base, nm) : base;
+      if (path.resolve(cand) === path.resolve(have)) continue;
+      const exe = path.join(cand, kind === 'katago' ? 'katago.exe' : 'llama-server.exe');
+      if (!fs.existsSync(exe)) continue;
+      const b = backendBrandOfDir(kind, cand);
+      if ((b === 'nvidia') === needNv) return exe;                  // 找到对的那套
+    }
+    return null;                                                    // 没有另一套 → 不动
+  } catch (e) { return null; }
+}
+
+/* 某个引擎该用哪个可执行文件。
+   ★ 这里比"直接返回 PATHS.xxx"多了一层**自动换引擎**：只有当配好的那份和本机
+     显卡明显不匹配、而且另一套确实存在时才换 —— 换之前不猜（见 backendBrandOfDir）。 */
 function exeOf(e) {
-  return e.kind === 'llama' ? PATHS.coachServer : PATHS.katago;
+  const want = e.kind === 'llama' ? PATHS.coachServer : PATHS.katago;
+  const alt = pickWorkingEngine(e.kind, want);
+  return alt || want;
 }
 
 /* ★★ human 权重（对弈引擎）的硬性要求：**必须**给出 humanSLProfile，
@@ -1623,10 +1812,58 @@ async function gpuInfo() {
   }
 }
 
+/* Llama 讲解引擎（LoGos）的可用性探测。
+   ★ 为什么要单独查（2026-10-08 用户报的问题）：
+     懒人包里 KataGo 和 LoGos 是**两套独立的引擎**，各有各的显卡构建：
+       KataGo：cuda（N 卡） / opencl（通用）
+       LoGos ：cuda（N 卡） / vulkan（通用）
+     原来「引擎兼容性自检」**只查 KataGo** → A 卡用户按提示换了 KataGo 的 OpenCL 版之后，
+     LoGos 还是 N 卡那套、照样跑不起来，而软件一句话都不说。
+   ★ 探测手段（实测可行）：`llama-server.exe --list-devices`
+     它会把认出来的设备打出来，例如：
+        Available devices:
+          CUDA0: NVIDIA GeForce RTX 4070 Laptop GPU (8187 MiB, 7068 MiB free)
+     认得出来 = 这套构建能用；只有 "Available devices:" 后面空着 = 用不了。
+   ★ 必须带超时：万一它在等什么，不能让自检卡住（同 RunWithTimeout 的理由）。 */
+function probeLlamaDevices(exePath, cb) {
+  if (!exePath || !fs.existsSync(exePath)) { cb({ ok: false, why: '找不到 llama-server.exe' }); return; }
+  let done = false;
+  const finish = o => { if (!done) { done = true; cb(o); } };
+  let proc = null;
+  try {
+    proc = spawn(exePath, ['--list-devices'], { windowsHide: true });
+  } catch (e) { finish({ ok: false, why: '起不来 llama-server：' + ((e && e.message) || e) }); return; }
+  let out = '';
+  const timer = setTimeout(() => {
+    try { proc.kill(); } catch (e) { /* 已经退了 */ }
+    finish({ ok: false, why: 'llama-server 20 秒没回应（可能显卡驱动有问题）' });
+  }, 20000);
+  proc.stdout.on('data', d => { out += d.toString(); });
+  proc.stderr.on('data', d => { out += d.toString(); });
+  proc.on('error', e => { clearTimeout(timer); finish({ ok: false, why: '跑不起来：' + ((e && e.message) || e) }); });
+  proc.on('close', () => {
+    clearTimeout(timer);
+    /* 有设备行 = 能用（设备名里通常带显卡型号，直接展示给用户）
+       ⚠️ 别写 `(?m)` —— 那是 PCRE 的内联标志，JS 不支持，会直接 SyntaxError。
+          这里用 `^...$` 配合 `m` 标志（第二个参数）。 */
+    const m = out.match(/^\s*(CUDA\d|Vulkan\d|ROCm\d|OpenCL\d|CPU)\s*:\s*(.+)$/m);
+    if (m) {
+      const mem = (m[2].match(/(\d+)\s*MiB/) || [])[1];
+      finish({ ok: true, device: m[1], detail: m[2].trim(), vramMB: mem ? +mem : 0 });
+    } else {
+      finish({ ok: false, why: '这套讲解引擎认不出你机器上的显卡（需要换一个版本）' });
+    }
+  });
+}
+
 /* 把两边对起来：不匹配时给一句**具体**的建议（含该去下哪个包）。
    只报「确定的」不匹配 —— 后端品牌已知、显卡品牌已知、且两者不同。 */
 async function engineCheck() {
-  const be = probeBackendSync(PATHS.katago);
+  /* ★ 用"实际会启动的那一个"，不是配里存的那个 —— 两套引擎并存时
+     配里可能指着不匹配的那套，而运行时 exeOf() 会自动换成另一套；
+     自检要是看配里那个，就会报一个用户根本不会遇到的错（2026-10-08 修）。 */
+  const exe = pickWorkingEngine('katago', PATHS.katago) || PATHS.katago;
+  const be = probeBackendSync(exe);
   const gpu = await gpuInfo();
   const out = { backend: be, gpu, warn: '' };
   if (!be.ok) { out.warn = ''; return out; }              // 引擎文件都不在：那是"找不到"，不是后端问题
@@ -1637,6 +1874,13 @@ async function engineCheck() {
       + '要去 KataGo 官方 Release 下「' + (be.downloads || '对应你显卡的那份') + '」，'
       + '在「设置」里把「KataGo 程序」指到新的 katago.exe。';
   }
+  /* ★ 顺带查一下 AI 讲解引擎（LoGos）能不能用（2026-10-08 加，见 probeLlamaDevices 的注释）。
+     它是**另一套**引擎、另一套构建，所以必须单独查 —— 否则 A 卡用户换完 KataGo
+     还是用不了讲解，而软件不会告诉他。 */
+  out.llama = await new Promise(resolve => {
+    const lex = pickWorkingEngine('llama', PATHS.coachServer) || PATHS.coachServer;
+    probeLlamaDevices(lex, resolve);
+  });
   return out;
 }
 ipcMain.handle('engine:check', () => engineCheck());

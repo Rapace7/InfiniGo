@@ -5094,14 +5094,30 @@ function renderEngineCheck(r) {
   }
   const gpuTxt = gpu.name ? (gpu.name + (gpu.brand ? '（' + gpu.brand.toUpperCase() + '）' : '')) : '认不出显卡';
   const parts = [
-    '引擎：' + (be.name || be.raw) + (be.version ? '（KataGo v' + be.version + '）' : ''),
+    '下棋/分析：' + (be.name || be.raw) + (be.version ? '（v' + be.version + '）' : ''),
     '显卡：' + gpuTxt,
   ];
-  if (r.warn) {
-    el.textContent = parts.join('　·　') + '　——　' + r.warn;
+  /* ★ AI 讲解是**另一套**引擎、另一套显卡构建，所以单独报一行
+     （2026-10-08 加：原来只查 KataGo —— A 卡用户按提示换完 KataGo 之后，
+       LoGos 还是 N 卡那套、照样用不了，而软件一句话都不说。那是最让人困惑的情况。） */
+  const la = r.llama || null;
+  if (la) {
+    parts.push('AI 讲解：' + (la.ok
+      ? (la.device + (la.vramMB ? '（可用 ' + la.vramMB + ' MB）' : ''))
+      : '用不了'));
+  }
+
+  const bad = [];
+  if (r.warn) bad.push(r.warn);
+  if (la && !la.ok) {
+    bad.push('「AI 讲解」引擎用不了（' + (la.why || '认不出显卡') + '）。不影响下棋与分析；'
+      + '想用讲解就去项目 Release 下载【通用版】包 —— 里面的讲解引擎什么显卡都能跑。');
+  }
+  if (bad.length) {
+    el.textContent = parts.join('　·　') + '　——　' + bad.join('　');
     el.classList.add('bad');
   } else {
-    el.textContent = parts.join('　·　') + '　——　✓ 这两者能配上';
+    el.textContent = parts.join('　·　') + '　——　✓ 都能配上';
     el.classList.add('ok');
   }
 }
