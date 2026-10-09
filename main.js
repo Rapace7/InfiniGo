@@ -11,7 +11,7 @@
  *   · 而 human 权重是「模仿人类」，它的胜率标尺偏业余 —— 当分析数字用不准。
  *   两条通道在 IPC 上分开：engine:analyze / engine:play。
  */
-const { app, BrowserWindow, ipcMain, shell, dialog, screen, net } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, dialog, screen, net, Menu } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const readline = require('readline');
@@ -41,6 +41,22 @@ try {
        所以打包后基准取 **exe 所在目录**：数据都是用户看得见的文件夹，升级覆盖程序也不丢。
    `app.isPackaged` 在 ready 之前就能用（不需要等 app ready）。 */
 const IS_PACKAGED = app.isPackaged;
+
+/* ★★ 平台化的可执行文件名（2026-10-09 为 macOS 版加）。
+   为什么要集中一处：Windows 上引擎叫 `katago.exe` / `llama-server.exe`，
+   而 macOS / Linux 上**没有 `.exe` 后缀**（Homebrew 装出来就是 `katago`，
+   llama.cpp 的 mac 包解出来就是 `llama-server`）。
+   原来这 9 处各自写死了 `'katago.exe'`，散在 123 / 144 / 228 / 231 / 413 /
+   1754 / 1829 / 2005 / 2006 行 —— 一处漏改就是「引擎找不到」。
+   现在只在这里判断一次，别处一律用常量。 */
+const WIN = process.platform === 'win32';
+const EXE = WIN ? '.exe' : '';
+const KATAGO_BIN = 'katago' + EXE;
+const LLAMA_BIN  = 'llama-server' + EXE;
+/* 给用户看的文案里也要用对名字（Windows 写 katago.exe，Mac 写 katago） */
+const KATAGO_LABEL = KATAGO_BIN;
+const LLAMA_LABEL  = LLAMA_BIN;
+
 /* ★ 用 process.execPath 而不是 app.getPath('exe')：
    后者在 app ready 之前调用会抛错，而这个常量是在**模块顶层**求值的 ——
    一抛就是「主进程加载失败 → 窗口一闪就没」（打包版实测退出码 0，很难查）。
@@ -120,7 +136,7 @@ function pickKataGoEngineDir(root) {
   const std  = path.join(root, 'engine');
   const nv   = path.join(root, 'engine-nvidia');
   const gen  = path.join(root, 'engine-generic');
-  const has = p => { try { return fs.existsSync(path.join(p, 'katago.exe')); } catch (e) { return false; } };
+  const has = p => { try { return fs.existsSync(path.join(p, KATAGO_BIN)); } catch (e) { return false; } };
   let gpuBrand = '';
   try { gpuBrand = (detectGpuBrandSync() || '').toLowerCase(); } catch (e) { gpuBrand = ''; }
   if (gpuBrand === 'nvidia' && has(nv)) return nv;
@@ -141,7 +157,7 @@ function pickLoGosDir(root) {
   const std = root;
   const nv  = path.join(root, 'runtime-nvidia');
   const gen = path.join(root, 'runtime-generic');
-  const has = p => { try { return fs.existsSync(path.join(p, 'llama-server.exe')); } catch (e) { return false; } };
+  const has = p => { try { return fs.existsSync(path.join(p, LLAMA_BIN)); } catch (e) { return false; } };
   let gpuBrand = '';
   try { gpuBrand = (detectGpuBrandSync() || '').toLowerCase(); } catch (e) { gpuBrand = ''; }
   if (gpuBrand === 'nvidia' && has(nv)) return nv;
@@ -225,10 +241,10 @@ function defaultPaths() {
   const eng  = pickKataGoEngineDir(root);
   const ldir = pickLoGosDir(logos);
   return {
-    katago:        path.join(eng, 'katago.exe'),
+    katago:        path.join(eng, KATAGO_BIN),
     analyzeWeight: resolveWeightPath(wdir, 'b11c768nbt.bin.gz', false),
     playWeight:    resolveWeightPath(wdir, 'b18c384nbt-humanv0.bin.gz', true),
-    coachServer:   path.join(ldir, 'llama-server.exe'),
+    coachServer:   path.join(ldir, LLAMA_BIN),
     coachWeight:   resolveWeightPath2(ldir, 'LoGos-7B-Q4_K_M.gguf'),
   };
 }
@@ -410,7 +426,7 @@ function pickWorkingEngine(kind, want) {
     for (const nm of names) {
       const cand = nm ? path.join(base, nm) : base;
       if (path.resolve(cand) === path.resolve(have)) continue;
-      const exe = path.join(cand, kind === 'katago' ? 'katago.exe' : 'llama-server.exe');
+      const exe = path.join(cand, kind === 'katago' ? KATAGO_BIN : LLAMA_BIN);
       if (!fs.existsSync(exe)) continue;
       const b = backendBrandOfDir(kind, cand);
       if ((b === 'nvidia') === needNv) return exe;                  // 找到对的那套
@@ -1751,7 +1767,7 @@ const BACKEND_HINTS = {
 
 /* 认不出的后端名一律当"未知"处理 —— 绝不用不确定的名字去报错（假警报比沉默更糟）。 */
 function probeBackendSync(exePath) {
-  if (!exePath || !fs.existsSync(exePath)) return { ok: false, why: '找不到 katago.exe' };
+  if (!exePath || !fs.existsSync(exePath)) return { ok: false, why: ('找不到 ' + KATAGO_LABEL) };
   let out = '';
   try {
     /* 用 execFileSync：同步、拿得到 stdout，且 --version 这类命令瞬间返回。
@@ -1826,7 +1842,7 @@ async function gpuInfo() {
      认得出来 = 这套构建能用；只有 "Available devices:" 后面空着 = 用不了。
    ★ 必须带超时：万一它在等什么，不能让自检卡住（同 RunWithTimeout 的理由）。 */
 function probeLlamaDevices(exePath, cb) {
-  if (!exePath || !fs.existsSync(exePath)) { cb({ ok: false, why: '找不到 llama-server.exe' }); return; }
+  if (!exePath || !fs.existsSync(exePath)) { cb({ ok: false, why: ('找不到 ' + LLAMA_LABEL) }); return; }
   let done = false;
   const finish = o => { if (!done) { done = true; cb(o); } };
   let proc = null;
@@ -2002,8 +2018,8 @@ ipcMain.handle('settings:choose', async (_e, kind) => {
   const isExe = !isGguf && (kind === 'katago' || kind === 'coachServer');
   const title = isDir ? '选择棋谱库文件夹（棋谱、复盘报告、讲解都会放这儿）'
     : isGguf ? '选择 LoGos 讲解权重（.gguf）'
-      : kind === 'coachServer' ? '选择 llama-server.exe'
-        : isExe ? '选择 katago.exe' : '选择 KataGo 权重（.bin.gz 或 .bin）';
+      : kind === 'coachServer' ? ('选择 ' + LLAMA_LABEL)
+        : isExe ? ('选择 ' + KATAGO_LABEL) : '选择 KataGo 权重（.bin.gz 或 .bin）';
   const opt = {
     title,
     defaultPath: isDir ? (cur[kind] || RECORDS_DIR) : path.dirname(cur[kind] || ''),
@@ -2141,7 +2157,45 @@ ipcMain.handle('records:setNote', (_e, name, note) => {
   } catch (e) { return { error: String((e && e.message) || e) }; }
 });
 
+/* ★★ 应用菜单（2026-10-09 为 macOS 加）。
+   为什么必须有它：
+     · macOS 上**所有 App 都该有菜单栏**。没有菜单栏，用户按不出 ⌘Q（退不掉）、
+       ⌘C/⌘V（复制粘贴失效）、⌘M（最小化），还会觉得"这软件没做完"。
+     · 原来代码里只有 `autoHideMenuBar: true`（那是 Windows 的"按 Alt 才显示"），
+       **根本没有菜单** —— Mac 上等于裸奔。
+   Windows 上我们**不设菜单**：`autoHideMenuBar: true` 已经让菜单栏隐藏，
+   设了反而多一层（而且我们的功能都在界面里）。所以这里只给非 Windows 建。 */
+function setupAppMenu() {
+  if (WIN) return;                                   // Windows 不设（见上）
+  const template = [
+    /* 第一个菜单在 macOS 上会被系统接管成「应用名」菜单，必须放这些标准项 */
+    { role: 'appMenu' },
+    { role: 'editMenu' },                            // 复制 / 粘贴 / 全选（棋盘和讲解都要用）
+    {
+      label: '视图',
+      submenu: [
+        { role: 'reload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    { role: 'windowMenu' },
+  ];
+  try {
+    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  } catch (e) {
+    /* 建不出菜单不该拦住启动 —— 用户至少还能用界面里的功能 */
+    console.log('[菜单] 创建失败（不影响使用）：' + ((e && e.message) || e));
+  }
+}
+
 app.whenReady().then(() => {
+  setupAppMenu();
   /* ★ 启动时顺手清理引擎日志（只留最近 20 个）—— 用户要求「别像手机 APP 一样堆垃圾」。
      放在最前面：它不依赖任何窗口，失败也不影响启动。 */
   pruneEngineLogs();

@@ -7,7 +7,8 @@
 
 > ## 📥 [点这里下载 · 看安装步骤（5 分钟装好）](#下载与安装一步一步照着做)
 >
-> 只支持 Windows 10 / 11。**不想读长文就点上面这个链接**，那里从下载到跑起来一步一步写着。
+> 主力平台 Windows 10 / 11；**macOS 也能跑，但要自己打包**（见「🍎 macOS 用户请看这里」）。
+> **不想读长文就点上面这个链接**，那里从下载到跑起来一步一步写着。
 
 ![主界面](docs/screenshots/main-with-coach.png)
 
@@ -15,8 +16,9 @@
 
 ## 这是什么
 
-> **运行环境**：**Windows 10 / 11（64 位）**。显卡 N 卡 / A 卡 / Intel 都行（要下对引擎版本）。
-> **macOS 目前不支持** —— 详见「硬件要求 → macOS 用户请看这里」。
+> **运行环境**：**Windows 10 / 11（64 位）**是主要目标平台。显卡 N 卡 / A 卡 / Intel 都行（要下对引擎版本）。
+> **macOS 也能跑，但要自己打包 + 自己配引擎**（开发者没有 Mac 机器，不出预编译包）——
+> 详见「硬件要求 → 🍎 macOS 用户请看这里」，那里有完整命令。
 
 市面上不缺围棋软件，这个想解决的是一个具体问题：**下完一盘棋，知道自己哪里错了、为什么错。**
 
@@ -93,23 +95,76 @@
 | 显卡 | 4GB 显存的独显（或核显，能跑 KataGo 就行） | **8GB 显存**（RTX 3060 / 4060 以上） |
 | 硬盘 | 约 2 GB | 约 8 GB（要装讲解模型的话） |
 
-> ### ⚠️ macOS 用户请看这里
+> ### 🍎 macOS 用户请看这里（可用了 —— 但要你自己打包）
 >
-> **本软件目前只支持 Windows，macOS 上跑不了。**（不是没测试，是没做：程序里的引擎路径、
-> 快捷方式、进程管理都是 Windows 专用的，Mac 版需要一次正经移植。）
+> **代码已经支持 macOS（2026-10-09 起），但我们不提供预编译的 Mac 包。**
+> 原因很实在：**开发者没有 Mac 机器**，打出来的包没人能实测 —— 不敢发没验过的东西。
+> 另一个原因是 Apple 的签名公证要开发者年费（$99/年），目前没投。
 >
-> - **能用 KataGo 吗**：能 —— KataGo 官方支持 Mac（Metal 后端），
->   `brew install katago` 直接装好，而且是 Apple Silicon 原生。
->   但**本软件这个图形界面**用不了。
-> - **Mac 上想要一个能用的围棋 GUI**：换别的图形界面配同一个引擎，比如
+> **所以：Mac 用户自己打包、自己配引擎。** 全程就是几条命令，下面照着做。
+>
+> #### 第一步 · 装两个引擎
+>
+> ```bash
+> # ① KataGo（Homebrew 上是 Metal 后端，Apple Silicon 原生）
+> brew install katago
+> katago version          # 应输出 "Using Metal backend"
+>
+> # ② 讲解引擎 llama.cpp —— 去下官方 mac 包（约 11 MB）
+> #    Apple Silicon: llama-bXXXXX-bin-macos-arm64.tar.gz
+> #    Intel Mac    : llama-bXXXXX-bin-macos-x64.tar.gz
+> #    https://github.com/ggml-org/llama.cpp/releases
+> #    解压后里面那个 llama-server 就是要指给软件的程序
+>
+> # ③ 讲解模型（约 4.4 GB，和 Windows 用户是同一份，不用另找）
+> #    LoGos-7B-Q4_K_M.gguf
+> ```
+>
+> #### 第二步 · 打包
+>
+> ```bash
+> git clone https://github.com/Rapace7/RapaceGo.git
+> cd RapaceGo
+> npm install
+> npm run dist:mac        # 产出 dist/RapaceGo-mac-arm64.zip（Intel 机是 -x64）
+> ```
+>
+> #### 第三步 · 第一次打开要过一道 Gatekeeper
+>
+> 包是**未签名**的，macOS 会弹「已损坏，无法打开」—— **这是未签名的正常现象，
+> 不是软件坏了**。任选一种绕过：
+>
+> ```bash
+> xattr -cr /Applications/RapaceGo.app     # 推荐：去掉隔离属性
+> ```
+>
+> 或者在「访达」里**右键点图标 → 打开 → 再点「打开」**（只需第一次）。
+>
+> #### 第四步 · 在软件里指三个路径
+>
+> 「设置」里填：
+>
+> | 字段 | 填什么 |
+> |---|---|
+> | KataGo 程序 | `/opt/homebrew/bin/katago`（Intel Mac 是 `/usr/local/bin/katago`） |
+> | llama-server 程序 | 第一步解压出来的那个 `llama-server` |
+> | 讲解权重 | 第一步下的 `LoGos-7B-Q4_K_M.gguf` |
+>
+> #### 已知情况（诚实说明）
+>
+> - **只承诺 Apple Silicon（M 系列）**：Homebrew 有 arm64 预编译瓶。
+>   Intel Mac 的瓶没有，`brew install katago` **会从源码编译，很久**。
+>   Intel 用户建议改用纯 CPU 的 `eigen` 版（慢但一定能跑）。
+> - **整条 Mac 路径开发者没实机验证过**（没有 Mac 机器）。
+>   代码层面的改造是完整的（引擎名不再写死 `.exe`、加了 Mac 应用菜单），
+>   在 Windows 上跑全套测试确认没改坏；但**真机效果要靠你反馈**。
+>   有问题请开 [Issue](https://github.com/Rapace7/RapaceGo/issues)，把终端输出贴上。
+> - **不想自己打包？** 那就用 Windows 虚拟机（Parallels）或远程连一台 Windows；
+>   也可以换别的围棋 GUI 配同一个 KataGo，比如
 >   [KaTrain](https://github.com/sanderland/katrain)、
 >   [Lizzie](https://github.com/featurecat/lizzie)、
 >   [Sabaki](https://sabaki.yichuanshen.de/)、
->   [q5Go](https://github.com/bernds/q5Go) —— 都能在 Mac 上跑。
-> - **想在这台 Mac 上用本软件**：装个 Windows 虚拟机 / 用 Parallels，
->   或者用远程桌面连一台 Windows 机器。
-> - **想要原生 Mac 版**：去 [Issues](https://github.com/Rapace7/RapaceGo/issues) 说一声 ——
->   有人需要我就排期做（要做的事在 README 的「开发方式」里有写）。
+>   [q5Go](https://github.com/bernds/q5Go)。
 
 显存实测（RTX 4070 Laptop / 8GB，用 `nvidia-smi` 量）：
 
@@ -192,9 +247,9 @@ RDNA3 = `gfx110X`、RDNA3.5 = `gfx1151`、RDNA4 = `gfx120X`。
 > 里面那个 `RapaceGo.zip` 就是要下的东西。
 
 > ### ⚠️ 先确认你的系统
-> **本软件只支持 Windows 10 / 11（64 位）。**
-> **macOS 用不了**（引擎路径、快捷方式、进程管理都是 Windows 专用的，需要一次正经移植）——
-> **Mac 用户请先看下面的「macOS 用户请看这里」**，那里写了替代方案。
+> **主力平台是 Windows 10 / 11（64 位）。**
+> **macOS 用户请先看上面的「🍎 macOS 用户请看这里」** —— 能跑，但要自己打包、自己配引擎
+> （开发者没有 Mac 机器，不出预编译包），那里有完整命令和已知限制。
 > 显卡方面 **N 卡 / A 卡 / Intel 都能用**，但要下对引擎版本（见「显卡品牌」那一节）。
 
 全程约 10 分钟（不含下载时间）。
@@ -236,7 +291,9 @@ RDNA3 = `gfx110X`、RDNA3.5 = `gfx1151`、RDNA4 = `gfx120X`。
    - 显卡是 **AMD / Intel** → 选 `opencl` 开头的（任何品牌都能用）；
      AMD 还可以选 `rocm7.13-gfx???`（要按 GPU 代号挑，见下）
    - 只有 **核显 / 想用 CPU** → `eigen` 或 `eigenavx2`（慢，但一定能跑）
-   - **Mac** → 官方不提供 macOS 包，用 `brew install katago`（Metal 后端）
+   - **Mac** → 官方 Release 里**一个 macOS 包都没有**（我核过资产清单），
+     所以用 `brew install katago`（Metal 后端，Apple Silicon 原生）。
+     详见上面的「🍎 macOS 用户请看这里」。
 3. 解压 → 得到一个 `katago` 文件夹
 
 > 拿不准下哪个？软件的「**设置 → 引擎兼容性自检 → 检查**」会告诉你

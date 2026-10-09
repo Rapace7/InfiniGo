@@ -95,24 +95,79 @@ Click the indicator in the top bar when you want AI:
 | GPU | 4 GB VRAM (or integrated graphics — KataGo alone is fine) | **8 GB VRAM** (RTX 3060 / 4060 or better) |
 | Disk | ~2 GB | ~8 GB (if you want the commentary model) |
 
-> ### ⚠️ macOS users, read this first
+> ### 🍎 macOS users, read this first (it works now — but you build it yourself)
 >
-> **This app is Windows-only and will not run on macOS.** (Not "untested" — not built:
-> the engine paths, desktop shortcuts and process handling are all Windows-specific;
-> a Mac build needs a real port.)
+> **The code supports macOS as of 2026-10-09, but we do not ship a prebuilt Mac app.**
+> Straight reason: **the developer has no Mac**, so any binary we produced would go out
+> untested — and we don't ship untested binaries. Apple code signing + notarization also
+> costs a $99/year developer account, which isn't on the table right now.
 >
-> - **Can you still use KataGo on a Mac?** Yes — KataGo itself supports macOS via the
->   Metal backend and installs natively on Apple Silicon with `brew install katago`.
->   It's **this GUI** that you can't use.
-> - **Want a Go GUI on macOS?** Use another one with the same engine:
+> **So on macOS: you build it, and you install the engines.** It's a handful of commands.
+>
+> #### Step 1 — install the two engines
+>
+> ```bash
+> # (a) KataGo — Homebrew build uses the Metal backend, native on Apple Silicon
+> brew install katago
+> katago version          # should print "Using Metal backend"
+>
+> # (b) llama.cpp for the commentary engine — grab the official macOS build (~11 MB)
+> #     Apple Silicon: llama-bXXXXX-bin-macos-arm64.tar.gz
+> #     Intel Mac    : llama-bXXXXX-bin-macos-x64.tar.gz
+> #     https://github.com/ggml-org/llama.cpp/releases
+> #     The `llama-server` inside is the binary you'll point the app at.
+>
+> # (c) The commentary model (~4.4 GB, same file Windows users download)
+> #     LoGos-7B-Q4_K_M.gguf
+> ```
+>
+> #### Step 2 — build
+>
+> ```bash
+> git clone https://github.com/Rapace7/RapaceGo.git
+> cd RapaceGo
+> npm install
+> npm run dist:mac        # produces dist/RapaceGo-mac-arm64.zip (Intel: -x64)
+> ```
+>
+> #### Step 3 — get past Gatekeeper once
+>
+> The build is **unsigned**, so macOS will say *"is damaged and can't be opened"* —
+> **that's the normal unsigned-app behaviour, not a broken download.** Either:
+>
+> ```bash
+> xattr -cr /Applications/RapaceGo.app     # recommended: strip the quarantine flag
+> ```
+>
+> or **right-click the app → Open → Open** (only needed the first time).
+>
+> #### Step 4 — point the app at three files
+>
+> In **Settings**:
+>
+> | Field | What to put |
+> |---|---|
+> | KataGo program | `/opt/homebrew/bin/katago` (Intel Mac: `/usr/local/bin/katago`) |
+> | llama-server | the `llama-server` you unpacked in step 1 |
+> | Commentary weight | the `LoGos-7B-Q4_K_M.gguf` from step 1 |
+>
+> #### Known limitations (honestly)
+>
+> - **Apple Silicon (M-series) is what we promise.** Homebrew has arm64 bottles.
+>   There is **no x86_64 macOS bottle**, so on an Intel Mac `brew install katago`
+>   **compiles from source and takes a long time**; Intel users may prefer the
+>   CPU-only `eigen` build.
+> - **None of the Mac path has been tested on real hardware** (no Mac available).
+>   The code changes are complete (no more hardcoded `.exe`, proper macOS app menu)
+>   and the full Windows test suite passes, but **real-world results depend on your
+>   feedback** — please open an [issue](https://github.com/Rapace7/RapaceGo/issues)
+>   and paste your terminal output.
+> - **Don't want to build it?** Run Windows in a VM (Parallels/UTM) or remote into a
+>   Windows box — or use another Go GUI with the same KataGo:
 >   [KaTrain](https://github.com/sanderland/katrain),
 >   [Lizzie](https://github.com/featurecat/lizzie),
 >   [Sabaki](https://sabaki.yichuanshen.de/), or
 >   [q5Go](https://github.com/bernds/q5Go).
-> - **Want this app on your Mac?** Run Windows in a VM (Parallels/UTM), or remote
->   desktop into a Windows machine.
-> - **Want a native Mac build?** Open an issue and say so — if there's demand I'll
->   schedule it.
 >
 > ### GPU brands (NVIDIA / AMD / Intel all work)
 >
@@ -413,7 +468,8 @@ which build you are running:
 - **The downloaded zip (packaged build)**: engines sit in **the same folder as `RapaceGo.exe`**
   (`KataGo/`, `LoGos/` as siblings of the exe). The path and the nesting depth do not matter.
 - **Running from source**: engines go **one level above the project folder**
-  (code in `D:\x\RapaceGo\` → engines in `D:\x\KataGo\`).
+  (code in `D:\x\RapaceGo\` → engines in `D:\x\KataGo\`). Same on macOS —
+  but there you'd typically just point Settings at the Homebrew `katago`.
 - **The all-in-one package (懒人包)**: already configured; if you still see this, open an Issue
   with a screenshot of the paths in Settings.
 

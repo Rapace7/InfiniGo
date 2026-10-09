@@ -150,6 +150,10 @@ function fixtureReadConfig(weightFiles, cfgJson) {
   const root = path.join(dir, 'KataGo');
   fs.mkdirSync(path.join(root, 'engine'), { recursive: true });
   fs.mkdirSync(path.join(root, 'weights'), { recursive: true });
+  /* ★ 这里写死 'katago.exe' 是对的：本测试脚本是**普通 Node 脚本**
+     （不是被沙箱注入的那段 main.js），它自己没有 KATAGO_BIN 那个常量 ——
+     2026-10-09 我一时手快把这里也换成了常量，结果 ReferenceError。
+     测试数据用字面量、沙箱里给出同名常量，各归各。 */
   fs.writeFileSync(path.join(root, 'engine', 'katago.exe'), 'stub');
   for (const n of weightFiles) fs.writeFileSync(path.join(root, 'weights', n), 'stub');
   const cfgFile = path.join(dir, 'settings.json');
@@ -161,6 +165,12 @@ function fixtureReadConfig(weightFiles, cfgJson) {
        而 readConfig 有 try/catch，于是**静默地走 catch 分支返回默认值**，
        表现成"回退没生效"（我在这上面绕了几圈，记一笔）。 */
     RECENT_MAX: 8, RECORDS_DIR: path.join(dir, 'records'),
+    /* ★ 2026-10-09 补：`defaultPaths()` 改成用平台化的文件名常量之后
+       （KATAGO_BIN / LLAMA_BIN），沙箱里也得有 —— 否则 ReferenceError，
+       又被 readConfig 的 try/catch 吞掉，表现成"回退失效"。
+       沙箱的 process 只有 env（没 platform），所以这里直接给出 Windows 形态。
+       ★ 测试数据也必须跟着改：文件名从 `katago.exe` 变成 `KATAGO_BIN` 的值。 */
+    KATAGO_BIN: 'katago.exe', LLAMA_BIN: 'llama-server.exe',
   });
   vm.runInContext(section('function resolveWeightPath', 'function defaultPaths'), context);
   vm.runInContext(section('function defaultPaths()', '/* LoGos 服务的本地端口'), context);

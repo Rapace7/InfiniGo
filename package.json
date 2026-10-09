@@ -8,7 +8,8 @@
   "private": true,
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win"
+    "dist": "electron-builder --win",
+    "dist:mac": "electron-builder --mac"
   },
   "license": "MIT",
   "devDependencies": {
@@ -38,6 +39,18 @@
       ],
       "icon": "assets/app.ico",
       "artifactName": "RapaceGo.${ext}"
+    },
+    "mac": {
+      "target": [
+        { "target": "zip", "arch": ["arm64", "x64"] }
+      ],
+      "icon": "assets/icon-512.png",
+      "category": "public.app-category.board-games",
+      "artifactName": "RapaceGo-mac-${arch}.${ext}",
+      "darkModeSupport": true,
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false,
+      "extraFiles": []
     },
     "extraFiles": [
       { "from": "下载讲解模型.bat", "to": "." }
