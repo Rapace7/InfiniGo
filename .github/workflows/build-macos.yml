@@ -1,0 +1,78 @@
+# ============================================================
+#  在 GitHub 的 macOS 机器上打包 macOS 版
+#
+#  为什么需要这个：
+#    **Windows 上做不出 macOS 包** —— electron-builder 明确不支持跨平台打 mac
+#    （实测报错：「Build for macOS is supported only on macOS」）。
+#    而我们没有 Mac 机器，所以借 GitHub Actions 的免费 macOS runner。
+#
+#  ★ 产出的是**未签名**包，用户第一次打开会被 Gatekeeper 拦。
+#    所以这里显式关掉签名自动探测：
+#      CSC_IDENTITY_AUTO_DISCOVERY=false → 不去找证书、直接出未签名包（否则会报错退出）
+#      hardenedRuntime / gatekeeperAssess 已在 package.json 的 build.mac 里关掉
+#    正式签名公证要 Apple Developer 账号（$99/年），暂时不做。
+#
+#  怎么用：
+#    ① 自动：推一个 v* 的 tag（比如 v0.1.26）→ 自动打包并挂到对应的 Release
+#    ② 手动：仓库页 → Actions → 「Build macOS」→ Run workflow
+#       会产出一个 artifact（压缩包），在 Actions 页面下载
+# ============================================================
+name: Build macOS
+
+on:
+  # 推 tag 时自动打包并挂到 Release
+  push:
+    tags:
+      - 'v*'
+  # 也能手动触发（不依赖 tag）
+  workflow_dispatch:
+
+jobs:
+  build-mac:
+    runs-on: macos-latest
+    permissions:
+      contents: write          # 挂 Release 需要写权限
+
+    steps:
+      - name: 取出代码
+        uses: actions/checkout@v4
+
+      - name: 装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 装依赖
+        run: npm ci || npm install
+
+      - name: 打包（arm64 + x64 两个架构，未签名）
+        env:
+          # ★ 关键：不去找签名证书。没有它，electron-builder 会尝试签名然后失败。
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npx electron-builder --mac
+
+      - name: 看看产出了什么
+        run: ls -lh dist/
+
+      - name: 收集产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: RapaceGo-mac
+          path: |
+            dist/*.zip
+            dist/*.dmg
+          if-no-files-found: error
+
+      # 推 tag 时才挂到 Release；手动触发时只留 artifact
+      - name: 挂到 Release（仅推 tag 时）
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          TAG="${GITHUB_REF#refs/tags/}"
+          # Release 可能还不存在 —— 不存在就建一个草稿（避免抢占正式的说明）
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --title "$TAG" --notes "macOS 版（未签名，见 README 的 macOS 章节）" --draft
+          fi
+          gh release upload "$TAG" dist/*.zip dist/*.dmg --clobber
