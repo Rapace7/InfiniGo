@@ -16,7 +16,21 @@ const marker = '## 关于「三大目录」的分工';
 const i = t.indexOf(marker);
 if (i < 0) { console.error('★ 找不到通用部分的起点：' + marker); process.exit(1); }
 
-const ver = t.slice(0, i);
+/* ★★ 2026-10-09 修：**只取最新那一版，不要把历史全带上**。
+   原来这里写的是 `t.slice(0, i)` —— 把文件开头到 marker 之间的**全部**内容都算进来。
+   而 `发布说明.md` 是**所有历史版本的累积**（1000+ 行），
+   于是 v0.1.26 的 Release 说明里从 v0.1.26 一路排到 v0.1.12，
+   展开后要滚很久 —— 用户直接看出来了（「是不是还有非本次更新的大量内容？」）。
+   Release 说明本来就该只讲**这一版**改了什么；历史去 Releases 列表翻。
+   做法：按行找**第二个**版本标题行（形如 `v0.1.26：...`），在那里切开。 */
+const verAll = t.slice(0, i);
+const verLines = verAll.split('\n');
+let cutAt = verLines.length;
+const isVerHead = s => /^v?\d+\.\d+\.\d+\s*[：:]/.test(s);
+for (let k = 1; k < verLines.length; k++) {   // 从 1 开始：第 0 行是本版标题
+    if (isVerHead(verLines[k])) { cutAt = k; break; }
+}
+const ver = verLines.slice(0, cutAt).join('\n').trimEnd();
 const gen = t.slice(i);
 
 /* ★★ 2026-10-08 用户要求：**Release 说明必须"下载优先"**。
