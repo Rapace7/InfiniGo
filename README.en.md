@@ -155,7 +155,14 @@ Measured VRAM usage (RTX 4070 Laptop / 8 GB, read with `nvidia-smi`):
 > AI, nothing occupies VRAM. Click the indicator in the top bar when you need it, and
 > unload when you're done.
 
-**No discrete GPU?** KataGo runs CPU-only (changeable in Settings) — slow, but playable.
+**No discrete GPU?** KataGo can run CPU-only — slow, but playable. Download the `eigen`
+build (`katago-v?…-eigen-windows-x64.zip`) and point **Settings → KataGo program** at it.
+
+> ⚠️ There is **no "switch to CPU" toggle in Settings** — the panel only sets file paths.
+> Which device is used is decided by **which build of `katago.exe` you put there**
+> (see the GPU table above). The old README said "changeable in Settings"; that was wrong
+> (fixed 2026-10-09).
+
 The commentary model also runs on CPU but drops to a few characters per second, which is
 effectively unusable.
 
@@ -400,7 +407,15 @@ The update check fires **only when you click it** — no auto-check, no backgrou
 If it can't reach GitHub it says so instead of pretending you're up to date.
 (Enforced by `dev/_lint_net.mjs`, which fails if anything outside the update check reaches the net.)
 
-**"Engine not found"?** Open Settings and fix the paths (see the table above).
+**"Engine not found"?** Fix the paths in Settings — where the engines must go depends on
+which build you are running:
+
+- **The downloaded zip (packaged build)**: engines sit in **the same folder as `RapaceGo.exe`**
+  (`KataGo/`, `LoGos/` as siblings of the exe). The path and the nesting depth do not matter.
+- **Running from source**: engines go **one level above the project folder**
+  (code in `D:\x\RapaceGo\` → engines in `D:\x\KataGo\`).
+- **The all-in-one package (懒人包)**: already configured; if you still see this, open an Issue
+  with a screenshot of the paths in Settings.
 
 **"I can't see my downloaded weights in the file picker"?**
 The app accepts **`.bin.gz` and `.bin`**. Some hosts (Quark) won't share archives, so people
