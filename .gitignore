@@ -46,3 +46,8 @@ Desktop.ini
 .idea/
 *.swp
 *.swo
+
+# ★ 2026-10-09 补：_cm.txt 早就忽略了，但改用 _commit_msg.txt 时忘了加 —— 又提交进去一次。
+#   教训：任何「用完即删的临时文件」，要一次把所有命名变体都写进 .gitignore。
+_commit_msg.txt
+_*.tmp
