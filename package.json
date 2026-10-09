@@ -1,7 +1,7 @@
 {
   "name": "rapacego",
   "productName": "RapaceGo",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "description": "玄清围弈 —— 跟 AI 下棋、看客观数据、听本地模型讲棋",
   "author": "Rapace7",
   "main": "main.js",
@@ -38,7 +38,7 @@
         { "target": "zip", "arch": ["x64"] }
       ],
       "icon": "assets/app.ico",
-      "artifactName": "RapaceGo.${ext}"
+      "artifactName": "RapaceGo-win.${ext}"
     },
     "mac": {
       "target": [

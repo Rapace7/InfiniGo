@@ -1,4 +1,4 @@
-﻿# ============================================================
+# ============================================================
 #  同步到「正式版」目录 —— 打包之后跑这一条
 #
 #  用法（注意：Windows PowerShell 5.1 读 UTF-8 脚本需要 BOM，
@@ -28,7 +28,12 @@ param(
 # ★ 路径自适应（2026-10-09）：不再写死盘符，从脚本位置往上找工作区根
 . "$PSScriptRoot\_paths.ps1"
 $ErrorActionPreference = 'Stop'
-$ErrorActionPreference = "Stop"
+
+# 参数默认值从 _paths.ps1 推出来（按特征认目录，不写死名字）
+if (-not $DeployDir) { $DeployDir = $WDeploy }
+if (-not $Unpacked)  { $Unpacked  = Join-Path $WRepo 'dist\win-unpacked' }
+if (-not $DeployDir) { throw '找不到免解压版目录（工作区里没有含 RapaceGo.exe 的文件夹）' }
+if (-not $WRepo)     { throw '找不到源码仓库（工作区里没有含 .git + main.js 的文件夹）' }
 # ★★ 2026-10-06 深夜踩过的坑，别再犯：
 #   `[char]13 + [char]10` 在 PowerShell 里是**数组相加**（得到两个元素的数组），
 #   不是字符串拼接。后果有两层，都很隐蔽：
@@ -85,11 +90,17 @@ if ($NoBackup) {
   }
 }
 
-# ---------- 2) 清掉旧程序文件（保留用户数据） ----------
-Step "2/5" "清掉旧程序文件（保留 settings.json 与 records）"
-$keep = @('settings.json', 'records')
+# ---------- 2) 清掉旧程序文件（保留用户数据 + 引擎） ----------
+#  ★★ 2026-10-09 改了保留清单 —— 前提变了，别再照旧清：
+#    以前免解压版**不自带引擎**（settings.json 里存绝对路径指向工作区的 KataGo/LoGos），
+#    所以那时把引擎目录当"旧内容"清掉是对的。
+#    现在引擎**已经搬进免解压版内部**（自包含，搬到哪都能跑），
+#    再清就等于把引擎删了 —— 实测踩到：同步完 KataGo\ LoGos\ 全没了、软件起不来。
+#    ⚠️ 这两个目录是几 GB 的引擎，删了要重新搬（浪费且吓人），必须保。
+Step "2/5" "清掉旧程序文件（保留 settings.json、records 与引擎）"
+$keep = @('settings.json', 'records', 'KataGo', 'LoGos')
 $doomed = Get-ChildItem $DeployDir -Force | Where-Object { $keep -notcontains $_.Name }
-Write-Host "  将删除 $($doomed.Count) 项；保留：settings.json、records\"
+Write-Host "  将删除 $($doomed.Count) 项；保留：settings.json、records\、KataGo\、LoGos\"
 $doomed | ForEach-Object { Write-Host "    - $($_.Name)" }
 if (-not $DryRun) {
   $doomed | ForEach-Object { Remove-Item $_.FullName -Recurse -Force }

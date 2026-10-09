@@ -27,6 +27,12 @@ param(
   [string]$OutDir   = "",          # 默认桌面
   [switch]$Zip
 )
+# ★ 路径自适应（2026-10-09）：跑 _paths.ps1 让目录按特征认出来，不写死名字
+. "$PSScriptRoot\_paths.ps1"
+if (-not $WRoot) { throw '找不到工作区根（往上找不到同时有 KataGo 和 LoGos 的那一层）' }
+if (-not $Src)       { $Src       = $WRepo }
+if (-not $KataGoSrc) { $KataGoSrc = $WKataGo }
+if (-not $LoGosSrc)  { $LoGosSrc  = $WLoGos }
 if (-not $Src) { $Src = Split-Path -Parent $PSScriptRoot }
 $ErrorActionPreference = "Stop"
 $log = @()

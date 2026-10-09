@@ -12,26 +12,25 @@
 #      hardenedRuntime / gatekeeperAssess 已在 package.json 的 build.mac 里关掉
 #    正式签名公证要 Apple Developer 账号（$99/年），暂时不做。
 #
+#  ★★ 为什么**只手动触发、不自动发 Release**（2026-10-09 定）：
+#    Windows 包是本地打的，Mac 包在这里打。如果这里也去发 Release，
+#    就会和本地发布**抢同一个 Release** —— 顺序一乱，资产就被覆盖或漏掉。
+#    所以分工：**这里只产出 artifact（产物），发布统一由本地做。**
+#    流程：手动跑这个 workflow → 本地 `gh run download` 取回 zip → 本地一次性发 Release
+#
 #  怎么用：
-#    ① 自动：推一个 v* 的 tag（比如 v0.1.26）→ 自动打包并挂到对应的 Release
-#    ② 手动：仓库页 → Actions → 「Build macOS」→ Run workflow
-#       会产出一个 artifact（压缩包），在 Actions 页面下载
+#    仓库页 → Actions → 「Build macOS」→ Run workflow
+#    跑完在 Actions 页面能下 artifact；本地也可 `gh run download <run-id>`
 # ============================================================
 name: Build macOS
 
 on:
-  # 推 tag 时自动打包并挂到 Release
-  push:
-    tags:
-      - 'v*'
-  # 也能手动触发（不依赖 tag）
+  # 只手动触发（见上面「为什么」）
   workflow_dispatch:
 
 jobs:
   build-mac:
     runs-on: macos-latest
-    permissions:
-      contents: write          # 挂 Release 需要写权限
 
     steps:
       - name: 取出代码
@@ -54,31 +53,15 @@ jobs:
         #    我们没给 GH_TOKEN，于是它在**包已经打好之后**报错退出：
         #      ⨯ GitHub Personal Access Token is not set, neither programmatically, nor using env "GH_TOKEN"
         #    结果：zip 明明生成好了，整个 job 却是红的。
-        #    发布由下面单独的步骤做（用 GITHUB_TOKEN），这里只负责打包。
+        #    发布由本地做（见文件头说明）。
         run: npx electron-builder --mac --publish never
 
       - name: 看看产出了什么
-        run: ls -lh dist/
+        run: ls -lh dist/*.zip
 
       - name: 收集产物
         uses: actions/upload-artifact@v4
         with:
           name: RapaceGo-mac
-          path: |
-            dist/*.zip
-            dist/*.dmg
+          path: dist/*.zip
           if-no-files-found: error
-
-      # 推 tag 时才挂到 Release；手动触发时只留 artifact
-      - name: 挂到 Release（仅推 tag 时）
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -e
-          TAG="${GITHUB_REF#refs/tags/}"
-          # Release 可能还不存在 —— 不存在就建一个草稿（避免抢占正式的说明）
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "$TAG" --notes "macOS 版（未签名，见 README 的 macOS 章节）" --draft
-          fi
-          gh release upload "$TAG" dist/*.zip dist/*.dmg --clobber
