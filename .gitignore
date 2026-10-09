@@ -31,6 +31,10 @@ _cm.txt
 # 打包输出（electron-builder 生成，发布时传 Release，不进仓库）
 dist/
 
+# Release 说明（由 dev\_mk_notes.mjs 从 发布说明.md 生成，发布时用，不进仓库）
+# ★ 踩过（2026-10-09）：它是生成物，我却用 `git add -A` 把它提交进去了
+_release_notes.md
+
 # ---------- 系统生成的垃圾 ----------
 Thumbs.db
 ehthumbs.db
