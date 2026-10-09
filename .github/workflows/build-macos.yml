@@ -49,7 +49,13 @@ jobs:
         env:
           # ★ 关键：不去找签名证书。没有它，electron-builder 会尝试签名然后失败。
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npx electron-builder --mac
+        # ★★ --publish never 是必须的（2026-10-09 第一次跑就栽在这）：
+        #    electron-builder 一旦发现自己在 CI 里，就会**自动去发布 GitHub Release**；
+        #    我们没给 GH_TOKEN，于是它在**包已经打好之后**报错退出：
+        #      ⨯ GitHub Personal Access Token is not set, neither programmatically, nor using env "GH_TOKEN"
+        #    结果：zip 明明生成好了，整个 job 却是红的。
+        #    发布由下面单独的步骤做（用 GITHUB_TOKEN），这里只负责打包。
+        run: npx electron-builder --mac --publish never
 
       - name: 看看产出了什么
         run: ls -lh dist/
