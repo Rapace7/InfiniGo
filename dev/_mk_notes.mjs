@@ -32,10 +32,21 @@ const gen = t.slice(i);
    （想跳的话 `#assets` 锚点仍然有效，只是不再占一行标题的位置。） */
 const firstLine = (ver.split('\n')[0] || '').replace(/^v?[\d.]+\s*[：:]\s*/, '').trim();
 
+/* ★ 2026-10-09 改：从 v0.1.26 起有**三个**下载包（win + mac 两个架构），
+   原来那句"下载 Assets 里那个 RapaceGo.zip"就过时了 —— 用户会找不到那个名字。
+   这里按平台列清楚，并顺手说明"都不含引擎"（这是最常被误解的一点）。 */
 const HEAD = [
   '**' + (firstLine || '本次更新说明见下。') + '**',
   '',
-  '下载：页面下面的 `Assets` 里那个 `RapaceGo.zip`（约 146 MB）。',
+  '**下载**（页面最下面的 `Assets`，按平台挑一个；三个都**不含引擎**）：',
+  '',
+  '| 平台 | 文件 |',
+  '|---|---|',
+  '| Windows | `RapaceGo-win.zip` |',
+  '| macOS（M 系列） | `RapaceGo-mac-arm64.zip` |',
+  '| macOS（Intel） | `RapaceGo-mac-x64.zip` |',
+  '',
+  '引擎要自己配（见 README「显卡品牌」那一节）；想省事就用**懒人包**（网盘那个完整包，自带引擎）。',
   '',
   '<details>',
   '<summary><b>展开看这一版改了什么</b></summary>',
