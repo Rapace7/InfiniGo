@@ -1,7 +1,8 @@
-﻿$ErrorActionPreference = 'SilentlyContinue'
+﻿. "$PSScriptRoot\_paths.ps1"
+$ErrorActionPreference = 'SilentlyContinue'
 
 $checks = @(
-    @{ name = '免解压版'; dir = 'D:\GoStudy\玄清围弈' },
+    @{ name = '免解压版'; dir = $WDeploy },
     @{ name = '懒人包';   dir = 'C:\Users\rapac\Desktop\RapaceGo懒人包' }
 )
 

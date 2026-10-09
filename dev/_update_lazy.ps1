@@ -1,4 +1,5 @@
-﻿# ============================================================
+﻿. "$PSScriptRoot\_paths.ps1"
+# ============================================================
 #  把「玄清围弈」（已同步的最新版）里的**程序文件**复制到桌面懒人包
 #
 #  用法： powershell -NoProfile -ExecutionPolicy Bypass -File _update_lazy.ps1
@@ -19,7 +20,7 @@
 # ============================================================
 $ErrorActionPreference = 'Stop'
 
-$SRC  = 'D:\GoStudy\玄清围弈'
+$SRC  = $WDeploy
 $DEST = 'C:\Users\rapac\Desktop\RapaceGo懒人包'
 $EXCLUDE = @('settings.json', 'records', 'userdata', 'start.bat', 'engine-logs')
 
@@ -43,7 +44,7 @@ Write-Host ("  复制了 $copied 项")
 #    （在 RapaceGo\ 根目录），而不是塞进打包产物里 —— 不然一 regenerate 就丢。
 #    曾短暂放过一个"环境自检器"，后来撤了：软件内的「引擎兼容性自检」已经能查
 #    两套引擎并自动挑对，独立脚本是多余的（首相 2026-10-08 决定）。
-$readmeSrc = 'D:\GoStudy\RapaceGo\懒人包使用说明.txt'
+$readmeSrc = Join-Path $WRepo '懒人包使用说明.txt'
 if (Test-Path $readmeSrc) {
     Copy-Item -LiteralPath $readmeSrc -Destination (Join-Path $DEST '使用说明.txt') -Force
     Write-Host '  ✓ 使用说明.txt 已更新'

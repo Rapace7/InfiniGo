@@ -1,4 +1,5 @@
-﻿# ============================================================
+﻿. "$PSScriptRoot\_paths.ps1"
+# ============================================================
 #  检查"给 Windows 用的文本文件"编码与换行（2026-10-06 深夜，踩了太多次）
 #  用法：  powershell -File _check_encodings.ps1   （退出码 0 = 全过）
 #
@@ -53,7 +54,7 @@ Get-ChildItem $root -File | Where-Object { $_.Extension -eq '.bat' -or $_.Extens
 }
 Write-Host ""
 Write-Host "=== 正式版目录里的 .bat（用户会双击的）===" -ForegroundColor Cyan
-$deploy = "D:\GoStudy\玄清围弈"
+$deploy = $WDeploy
 if (Test-Path $deploy) {
   Get-ChildItem $deploy -File -Filter *.bat | ForEach-Object { Test-OneFile $_.FullName }
 } else {

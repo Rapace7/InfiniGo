@@ -17,13 +17,17 @@
 #    这两个是**唯一保留**的；其余（含 userdata 缓存）一律替换成新包内容。
 # ============================================================
 param(
-  [string]$DeployDir = "D:\GoStudy\玄清围弈",
-  [string]$Unpacked  = "D:\GoStudy\RapaceGo\dist\win-unpacked",
+  [string]$DeployDir = "",
+  [string]$Unpacked  = "",
   [switch]$DryRun,
   [switch]$NoBackup,
   [switch]$KeepUnpacked,
   [int]$KeepBackups = 2
 )
+
+# ★ 路径自适应（2026-10-09）：不再写死盘符，从脚本位置往上找工作区根
+. "$PSScriptRoot\_paths.ps1"
+$ErrorActionPreference = 'Stop'
 $ErrorActionPreference = "Stop"
 # ★★ 2026-10-06 深夜踩过的坑，别再犯：
 #   `[char]13 + [char]10` 在 PowerShell 里是**数组相加**（得到两个元素的数组），
@@ -54,7 +58,7 @@ if (-not (Test-Path $DeployDir)) { throw "目标目录不存在：$DeployDir" }
 # ---------- 1) 备份现有正式版（可回退） ----------
 Step "1/5" "备份现有正式版（可回退）"
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$bak = "D:\GoStudy\_backup_玄清围弈_$stamp"
+$bak = Join-Path $WRoot "_backup_玄清围弈_$stamp"
 if ($NoBackup) {
   Write-Host "  已指定 -NoBackup：跳过备份（出问题就只能重打包）"
 } elseif ($DryRun) {
@@ -68,7 +72,7 @@ if ($NoBackup) {
   #   每一份是 368MB 的完整程序目录 —— 一晚同步 4 次就 1.5GB，
   #   用户直接问「你给我在 GoStudy 里新增的两个 backup 文件夹是啥玩意」。
   #   现在只留最近 $KeepBackups 份，旧的删掉（进回收站，仍可捞）。
-  $olds = Get-ChildItem "D:\GoStudy" -Directory -Filter "_backup_玄清围弈_*" |
+  $olds = Get-ChildItem $WRoot -Directory -Filter "_backup_玄清围弈_*" |
           Sort-Object CreationTime -Descending | Select-Object -Skip $KeepBackups
   if ($olds) {
     Add-Type -AssemblyName Microsoft.VisualBasic

@@ -22,10 +22,13 @@ param(
   [switch]$Restore,
   [switch]$Status
 )
+
+# ★ 路径自适应（2026-10-09）：不再写死盘符，从脚本位置往上找工作区根
+. "$PSScriptRoot\_paths.ps1"
 $ErrorActionPreference = 'Stop'
 
-$LIVE  = 'D:\GoStudy\玄清围弈\records'          # 用户的棋谱库（活目录，不能碰）
-$STASH = 'D:\GoStudy\_user_records_stash'       # 测试期间暂存处
+$LIVE  = Join-Path $WDeploy 'records'          # 用户的棋谱库（活目录，不能碰）
+$STASH = Join-Path $WRoot '_user_records_stash'       # 测试期间暂存处
 $MARK  = Join-Path $STASH '_stashed.flag'
 
 function Show-Status {

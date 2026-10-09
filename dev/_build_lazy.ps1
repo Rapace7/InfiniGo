@@ -22,8 +22,8 @@
 param(
   # 默认 = 本脚本所在 dev\ 的**上一级**（开发目录）。别写死盘符 —— 换机器/改目录名就废。
   [string]$Src      = "",
-  [string]$KataGoSrc= "D:\GoStudy\KataGo",
-  [string]$LoGosSrc = "D:\GoStudy\LoGos",
+  [string]$KataGoSrc= "",   # 默认从工作区根推（见下方 _paths.ps1）
+  [string]$LoGosSrc = "",
   [string]$OutDir   = "",          # 默认桌面
   [switch]$Zip
 )
@@ -64,15 +64,15 @@ $keep = @(
   'LICENSE.electron.txt', 'LICENSES.chromium.html'
 )
 foreach ($k in $keep) {
-  $from = Join-Path "D:\GoStudy\玄清围弈" $k
+  $from = Join-Path $WDeploy $k
   if (Test-Path $from) { Copy-Item $from (Join-Path $stage $k) -Recurse -Force }
 }
 # 顶层运行库（只取文件）
-Get-ChildItem "D:\GoStudy\玄清围弈" -File | Where-Object {
+Get-ChildItem $WDeploy -File | Where-Object {
   $_.Extension -in '.dll', '.pak', '.bin', '.dat', '.json'
 } | ForEach-Object { Copy-Item $_.FullName (Join-Path $stage $_.Name) -Force }
 # 需要的子目录（排除用户数据：records / engine-logs / userdata）
-Get-ChildItem "D:\GoStudy\玄清围弈" -Directory | Where-Object {
+Get-ChildItem $WDeploy -Directory | Where-Object {
   $_.Name -notin 'records', 'engine-logs', 'userdata'
 } | ForEach-Object { Copy-Item $_.FullName (Join-Path $stage $_.Name) -Recurse -Force }
 
