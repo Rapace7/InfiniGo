@@ -110,15 +110,29 @@
 > brew install katago
 > katago version          # 应输出 "Using Metal backend"
 >
-> # ② 讲解引擎 llama.cpp —— 去下官方 mac 包（约 11 MB）
-> #    Apple Silicon: llama-bXXXXX-bin-macos-arm64.tar.gz
-> #    Intel Mac    : llama-bXXXXX-bin-macos-x64.tar.gz
-> #    https://github.com/ggml-org/llama.cpp/releases
-> #    解压后里面那个 llama-server 就是要指给软件的程序
->
+> # ② 讲解引擎 llama.cpp
+> #    两种装法，任选一种：
+> #
+> #    【省事】用 Homebrew —— 推荐，下面第 ④ 步那个麻烦它自动没有
+> brew install llama.cpp
+> #    装完在 /opt/homebrew/bin/llama-server，直接指这个路径就行
+> #
+> #    【要特定版本】下官方 mac 包（约 11 MB）
+> #      Apple Silicon: llama-bXXXXX-bin-macos-arm64.tar.gz
+> #      Intel Mac    : llama-bXXXXX-bin-macos-x64.tar.gz
+> #      https://github.com/ggml-org/llama.cpp/releases
+> #    解压后那一整个文件夹都要留着（llama-server 要靠同目录的 .dylib）
+> #
 > # ③ 讲解模型（约 4.4 GB，和 Windows 用户是同一份，不用另找）
 > #    LoGos-7B-Q4_K_M.gguf
+> #    这个也一样，下完要过一遍第 ④ 步
 > ```
+>
+> ⚠️ **★ 关键（踩过）**：**从浏览器下载的每一个文件都要过第 ④ 步。**
+> 只对 `RapaceGo.app` 做 `xattr` 是**不够的** —— 引擎（llama-server、KataGo、
+> LoGos 的 `.gguf`）是**另外下载的**，各自带着 macOS 的隔离标记。
+> 带标记的二进制**不能执行**，表现正是「软件能识别到这个程序，但就是跑不起来」。
+> （本页最早那一版说明就漏了这句，用户实测踩到并反馈回来了。）
 >
 > #### 第二步 · 打包
 >
@@ -131,6 +145,8 @@
 >
 > #### 第三步 · 第一次打开要过一道 Gatekeeper
 >
+> **① 给软件本身去掉隔离属性**
+>
 > 包是**未签名**的，macOS 会弹「已损坏，无法打开」—— **这是未签名的正常现象，
 > 不是软件坏了**。任选一种绕过：
 >
@@ -140,6 +156,23 @@
 >
 > 或者在「访达」里**右键点图标 → 打开 → 再点「打开」**（只需第一次）。
 >
+> **② ★ 给你下载的引擎文件也去掉一遍（最容易漏、也是实测踩到的坑）**
+>
+> ```bash
+> # 下官方 llama.cpp 包的人：对解压出来那一整个文件夹做
+> xattr -cr ~/Downloads/llama-bXXXXX-bin-macos-arm64/
+>
+> # 讲解模型也做一遍（4.4 GB 那个 .gguf）
+> xattr -cr ~/Downloads/LoGos-7B-Q4_K_M.gguf
+> ```
+>
+> **为什么必须做**：macOS 会给**浏览器下载的每个文件**打上隔离标记，
+> 带标记的二进制**不能执行**。表现是「软件能识别到这个程序，但就是跑不起来」——
+> 不容易往"隔离属性"上想。
+>
+> **用 `brew install katago` / `brew install llama.cpp` 装的不用做这一步**
+> （Homebrew 装的文件不带隔离标记）—— 这也是为什么推荐用 Homebrew。
+>
 > #### 第四步 · 在软件里指三个路径
 >
 > 「设置」里填：
@@ -147,8 +180,11 @@
 > | 字段 | 填什么 |
 > |---|---|
 > | KataGo 程序 | `/opt/homebrew/bin/katago`（Intel Mac 是 `/usr/local/bin/katago`） |
-> | llama-server 程序 | 第一步解压出来的那个 `llama-server` |
+> | llama-server 程序 | `/opt/homebrew/bin/llama-server`，或第一步解压出来的那个 `llama-server` |
 > | 讲解权重 | 第一步下的 `LoGos-7B-Q4_K_M.gguf` |
+>
+> **重点：`katago` 和 `llama-server` 这两个都是推荐直接指 Homebrew 的路径** ——
+> 省掉第三步 ② 那道手续，而且 brew 会帮你更新。
 >
 > #### 已知情况（诚实说明）
 >

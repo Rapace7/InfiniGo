@@ -111,15 +111,28 @@ Click the indicator in the top bar when you want AI:
 > brew install katago
 > katago version          # should print "Using Metal backend"
 >
-> # (b) llama.cpp for the commentary engine — grab the official macOS build (~11 MB)
-> #     Apple Silicon: llama-bXXXXX-bin-macos-arm64.tar.gz
-> #     Intel Mac    : llama-bXXXXX-bin-macos-x64.tar.gz
-> #     https://github.com/ggml-org/llama.cpp/releases
-> #     The `llama-server` inside is the binary you'll point the app at.
->
+> # (b) llama.cpp for the commentary engine — two options:
+> #
+> #     [easier] Homebrew — recommended; it skips the hassle in step 3-②
+> brew install llama.cpp
+> #     lands at /opt/homebrew/bin/llama-server — point the app there
+> #
+> #     [specific version] official macOS build (~11 MB)
+> #       Apple Silicon: llama-bXXXXX-bin-macos-arm64.tar.gz
+> #       Intel Mac    : llama-bXXXXX-bin-macos-x64.tar.gz
+> #       https://github.com/ggml-org/llama.cpp/releases
+> #     Keep the whole unpacked folder — llama-server needs the .dylibs next to it.
+> #
 > # (c) The commentary model (~4.4 GB, same file Windows users download)
-> #     LoGos-7B-Q4_K_M.gguf
+> #     LoGos-7B-Q4_K_M.gguf — also needs step 3-②
 > ```
+>
+> ⚠️ **★ Important (learned the hard way)**: **every file you download from a browser
+> must go through step 3-②.** Doing `xattr` on `RapaceGo.app` alone is **not enough** —
+> the engines (llama-server, KataGo, the LoGos `.gguf`) are **separate downloads** and
+> each carries macOS's quarantine flag. A quarantined binary **cannot be executed**,
+> which shows up as "the app sees the program but it just won't run".
+> (The first version of this page omitted that line; a user hit it and reported back.)
 >
 > #### Step 2 — build
 >
@@ -132,6 +145,8 @@ Click the indicator in the top bar when you want AI:
 >
 > #### Step 3 — get past Gatekeeper once
 >
+> **① For the app itself**
+>
 > The build is **unsigned**, so macOS will say *"is damaged and can't be opened"* —
 > **that's the normal unsigned-app behaviour, not a broken download.** Either:
 >
@@ -141,6 +156,24 @@ Click the indicator in the top bar when you want AI:
 >
 > or **right-click the app → Open → Open** (only needed the first time).
 >
+> **② ★ For the engine files you downloaded (easy to miss, and a real user hit it)**
+>
+> ```bash
+> # Using the official llama.cpp build: do the whole unpacked folder
+> xattr -cr ~/Downloads/llama-bXXXXX-bin-macos-arm64/
+>
+> # And the model too (the 4.4 GB .gguf)
+> xattr -cr ~/Downloads/LoGos-7B-Q4_K_M.gguf
+> ```
+>
+> **Why this is required**: macOS tags **every file downloaded by a browser** with the
+> quarantine flag, and a tagged binary **will not execute**. The symptom is "the app
+> recognises the program but can't run it" — not something you'd naturally blame on
+> a quarantine flag.
+>
+> **Installed via `brew install katago` / `brew install llama.cpp`? Skip this step** —
+> Homebrew files carry no quarantine flag. That's another reason to prefer Homebrew.
+>
 > #### Step 4 — point the app at three files
 >
 > In **Settings**:
@@ -148,8 +181,11 @@ Click the indicator in the top bar when you want AI:
 > | Field | What to put |
 > |---|---|
 > | KataGo program | `/opt/homebrew/bin/katago` (Intel Mac: `/usr/local/bin/katago`) |
-> | llama-server | the `llama-server` you unpacked in step 1 |
+> | llama-server | `/opt/homebrew/bin/llama-server`, or the `llama-server` you unpacked |
 > | Commentary weight | the `LoGos-7B-Q4_K_M.gguf` from step 1 |
+>
+> **Point both `katago` and `llama-server` at the Homebrew paths** — that skips
+> step 3-② entirely, and brew keeps them updated.
 >
 > #### Known limitations (honestly)
 >
